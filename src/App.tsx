@@ -11,6 +11,7 @@ import Library from './components/Library'
 import Editor from './components/Editor'
 
 type Screen = 'home' | 'setup' | 'game' | 'library' | 'editor'
+const logoUrl = `${import.meta.env.BASE_URL}lantern-logo.png`
 type Artifact = RoleDefinition | PackDefinition | ScenarioDefinition
 
 export default function App() {
@@ -44,13 +45,13 @@ export default function App() {
   async function updateSession(next: GameSession) { setSession(next); await saveSession(next) }
   function openEditor(artifact: Artifact) { setEditArtifact(artifact); setScreen('editor') }
 
-  if (!ready) return <div className="boot"><img src="/lantern-logo.png" alt="" /><p>Lighting the lantern…</p></div>
+  if (!ready) return <div className="boot"><img src={logoUrl} alt="" /><p>Lighting the lantern…</p></div>
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <button className="brand" onClick={() => setScreen('home')} aria-label="Wherewolf home">
-          <img src="/lantern-logo.png" alt="" /><span>WHEREWOLF</span><small>MODERATOR</small>
+          <img src={logoUrl} alt="" /><span>WHEREWOLF</span><small>MODERATOR</small>
         </button>
         {screen !== 'home' && <button className="icon-button desktop-back" onClick={() => setScreen(screen === 'editor' ? 'library' : 'home')}><ChevronLeft size={18} /> Back</button>}
         <div className="offline-pill"><span /> Offline ready</div>
