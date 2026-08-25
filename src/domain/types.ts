@@ -46,6 +46,7 @@ export interface StateVariable {
 
 export type TriggerType =
   | 'setup.action'
+  | 'day.action'
   | 'night.action'
   | 'vote.beforeTally'
   | 'vote.afterTally'
@@ -73,8 +74,14 @@ export type Condition =
   | { op: 'targetIsSelf' }
   | { op: 'targetIsRelationship'; relationship: string; source?: 'self' | 'eventTarget' }
   | { op: 'hasTrait'; subject: 'self' | 'actor' | 'target'; trait: string }
+  | { op: 'hasFaction'; subject: 'self' | 'actor' | 'target'; faction: string }
   | { op: 'hasStatus'; subject: 'self' | 'actor' | 'target'; status: string }
+  | { op: 'hasRole'; subject: 'self' | 'actor' | 'target'; roleId: string }
   | { op: 'isAlive'; subject: 'self' | 'actor' | 'target'; value?: boolean }
+  | { op: 'ownerInBallot'; value?: boolean }
+  | { op: 'targetRoleHasTrait'; trait: string }
+  | { op: 'packSelected'; packId: string }
+  | { op: 'cycle'; compare: CompareOperator; value: number }
   | { op: 'state'; key: string; compare: CompareOperator; value: unknown }
   | { op: 'fact'; key: string; compare: CompareOperator; value: unknown }
   | { op: 'event'; field: string; compare: CompareOperator; value: unknown }
@@ -86,8 +93,10 @@ export type Selector =
   | { kind: 'eventActor' }
   | { kind: 'eventTarget' }
   | { kind: 'allPlayers'; life?: 'alive' | 'dead' | 'any' }
+  | { kind: 'publicPossibleRoles'; trait?: string; activeTrigger?: 'setup.action' | 'day.action' | 'night.action' }
   | { kind: 'trait'; trait: string; life?: 'alive' | 'dead' | 'any' }
   | { kind: 'faction'; faction: string; life?: 'alive' | 'dead' | 'any' }
+  | { kind: 'notFaction'; faction: string; life?: 'alive' | 'dead' | 'any' }
   | { kind: 'role'; roleId: string; life?: 'alive' | 'dead' | 'any' }
   | { kind: 'relationship'; relationship: string; from?: 'self' | 'eventTarget' }
   | { kind: 'highestRoleOrder'; trait: string; life?: 'alive' | 'dead' | 'any' }
@@ -103,13 +112,20 @@ export interface TargetSpec {
   excludeTraits?: string[]
 }
 
+export type NumericValue = number | { count: Selector; multiplier?: number; add?: number }
+
 export type Effect =
   | { type: 'inspectTrait'; targets: Selector; trait: string; positive: string; negative: string; rememberAs?: string }
   | { type: 'inspectFaction'; targets: Selector; faction: string; positive: string; negative: string }
+  | { type: 'inspectStatus'; targets: Selector; status: string; negative: string }
   | { type: 'learnRolesAbsent'; minimum: number | { constant: string } }
   | { type: 'learnRoleIdentity'; roleId: string }
   | { type: 'learnRolePresence'; roleId: string }
   | { type: 'learnFactionMembers'; faction: string }
+  | { type: 'learnPlayers'; targets: Selector; label: string }
+  | { type: 'learnCount'; targets: Selector; label: string }
+  | { type: 'learnPresence'; targets: Selector; label: string }
+  | { type: 'conditional'; condition: Condition; effects: Effect[]; otherwise?: Effect[] }
   | { type: 'addStatus'; targets: Selector; status: StatusDefinition; duration?: 'permanent' | 'night' | 'day' | 'next-day' }
   | { type: 'removeStatus'; targets: Selector; status: string }
   | { type: 'preventEvent'; reason: string }
@@ -117,16 +133,22 @@ export type Effect =
   | { type: 'queueAttack'; targets: Selector; attackType: string }
   | { type: 'kill'; targets: Selector; cause: string; timing?: 'now' | 'next-morning' }
   | { type: 'revive'; targets: Selector; limitKey?: string }
-  | { type: 'transformRole'; targets: Selector; roleId: string }
+  | { type: 'transformRole'; targets: Selector; roleId: string | { chosenRole: true } }
   | { type: 'changeFaction'; targets: Selector; faction: string }
   | { type: 'linkRelationship'; targets: Selector; relationship: string; reciprocal?: string }
-  | { type: 'modifyVotesReceived'; targets: Selector; operation: 'multiply' | 'add' | 'replace'; value: number; rounding?: 'ceil' | 'floor' | 'round' }
+  | { type: 'modifyVotesReceived'; targets: Selector; operation: 'multiply' | 'add' | 'replace'; value: NumericValue; rounding?: 'ceil' | 'floor' | 'round' }
+  | { type: 'forceBallot'; targets: Selector }
+  | { type: 'grantExtraVotes'; amount: NumericValue; vote: 'nomination' | 'ballot' }
+  | { type: 'suppressAction'; targets: Selector; trigger: 'setup.action' | 'day.action' | 'night.action'; duration?: 'night' | 'day' }
   | { type: 'replaceQualifiedCandidate'; guarded: Selector; replacement: Selector }
   | { type: 'allowCandidateVote'; targets: Selector }
   | { type: 'announce'; message: string; visibility: 'moderator' | 'public'; category?: string }
   | { type: 'setState'; key: string; value: unknown }
   | { type: 'incrementState'; key: string; amount: number }
+  | { type: 'setStateCount'; key: string; targets: Selector }
   | { type: 'personalWin'; targets: Selector; reason: string }
+  | { type: 'personalLose'; targets: Selector; reason: string }
+  | { type: 'endGame'; winningFaction?: string; winningTrait?: string; reason: string }
   | { type: 'cancelNext'; event: 'burn' | 'shadow-attack'; duration?: 'next-day' | 'next-night' | 'until-used' }
   | { type: 'noop'; message?: string }
 
@@ -135,6 +157,7 @@ export interface StatusDefinition {
   name: string
   traits?: string[]
   data?: Record<string, unknown>
+  abilities?: AbilityDefinition[]
 }
 
 export interface TraitDefinition {
@@ -188,7 +211,7 @@ export interface PackDefinition {
 }
 
 export type PhaseDefinition =
-  | { id: string; type: 'role-actions'; label: string; trigger: 'setup.action' | 'night.action'; abilityIds?: string[]; dependencyBarrier?: string }
+  | { id: string; type: 'role-actions'; label: string; trigger: 'setup.action' | 'day.action' | 'night.action'; abilityIds?: string[]; dependencyBarrier?: string }
   | { id: string; type: 'pause'; label: string; message: string }
   | { id: string; type: 'aggregate-vote'; label: string; vote: 'nomination' | 'ballot'; eligible: 'alive' | 'alive-except-candidates'; allowCandidateWithTrait?: string }
   | { id: string; type: 'qualification'; label: string; source: 'nomination'; rule: 'highest-and-second' }
@@ -207,7 +230,7 @@ export interface ScenarioDefinition {
   id: string
   meta: ArtifactMeta
   description: string
-  factions: Array<{ id: string; name: string; colour: string }>
+  factions: Array<{ id: string; name: string; colour: string; alignment?: 'human' | 'shadow' | 'neutral' }>
   capabilities: string[]
   defaultPackIds: string[]
   packs: PackDefinition[]
@@ -307,7 +330,9 @@ export interface GameState {
   attacks: Array<{ id: string; actorId?: string; targetId: string; type: string; prevented?: boolean; redirectedFrom?: string }>
   pendingDeaths: Array<{ playerId: string; cause: string; timing: 'now' | 'next-morning'; sourceDeathPlayerId?: string }>
   pendingAnnouncements: Array<{ message: string; category: string; visibility: 'moderator' | 'public'; title?: string; actionLabel?: string }>
+  pendingSpiritAssignments: string[]
   personalWinners: Array<{ playerId: string; reason: string }>
+  personalLosers: Array<{ playerId: string; reason: string }>
   winningFactions: string[]
   winners: string[]
   gameOver: boolean

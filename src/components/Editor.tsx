@@ -69,6 +69,7 @@ function TraitPicker({ role, traitCatalogue, editable, onChange }: { role: RoleD
   const [colour, setColour] = useState('#8c6fd1')
   const [description, setDescription] = useState('')
   const [error, setError] = useState('')
+  const [draggedTraitId, setDraggedTraitId] = useState('')
   const catalogue = useMemo(() => {
     const entries = new Map(traitCatalogue.map((trait) => [trait.id, trait]))
     ;(role.traitDefinitions ?? []).forEach((trait) => entries.set(trait.id, trait))
@@ -87,9 +88,18 @@ function TraitPicker({ role, traitCatalogue, editable, onChange }: { role: RoleD
   function removeTrait(id: string) { if (editable) onChange({ ...role, traits: role.traits.filter((traitId) => traitId !== id) }) }
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault()
-    const id = event.dataTransfer.getData('application/x-wherewolf-trait') || event.dataTransfer.getData('text/plain')
+    const dragging = document.querySelector<HTMLElement>('[data-trait-dragging="true"]')
+    const id = event.dataTransfer.getData('application/x-wherewolf-trait') || event.dataTransfer.getData('text/plain') || draggedTraitId || dragging?.dataset.traitId || document.body.dataset.dragTraitId || ''
     const trait = catalogue.find((entry) => entry.id === id)
     if (trait) addTrait(trait)
+    setDraggedTraitId('')
+  }
+  function finishPointerDrag() {
+    const id = document.body.dataset.dragTraitId
+    const trait = catalogue.find((entry) => entry.id === id)
+    if (trait) addTrait(trait)
+    delete document.body.dataset.dragTraitId
+    setDraggedTraitId('')
   }
   function createTrait() {
     const cleanLabel = label.trim()
@@ -103,12 +113,12 @@ function TraitPicker({ role, traitCatalogue, editable, onChange }: { role: RoleD
 
   return <section className="editor-section trait-builder">
     <div className="section-title"><div><span className="section-kicker">TRAITS</span><h2>What counts as this role?</h2><p>Click a trait or drag it onto the role. Trait labels and colours travel with exported roles.</p></div>{editable && <button className="secondary" onClick={() => setCreating((value) => !value)}><Plus /> New trait</button>}</div>
-    <div className={`trait-dropzone ${selected.length ? '' : 'empty'}`} aria-label="Traits on this role" onDragOver={(event) => editable && event.preventDefault()} onDrop={handleDrop}>
+    <div className={`trait-dropzone ${selected.length ? '' : 'empty'}`} aria-label="Traits on this role" onDragOver={(event) => editable && event.preventDefault()} onDrop={handleDrop} onPointerUp={finishPointerDrag}>
       {selected.length === 0 && <p>Drop traits here</p>}
       {selected.map((trait) => <div className="trait-chip assigned" key={trait.id} style={{ borderColor: trait.colour, backgroundColor: `${trait.colour}22` }}><i style={{ backgroundColor: trait.colour }} /><span><strong>{trait.label}</strong><small>{trait.id}</small></span>{editable && <button aria-label={`Remove ${trait.label}`} onClick={() => removeTrait(trait.id)}><X /></button>}</div>)}
     </div>
     {creating && <div className="new-trait-form"><label className="field"><span>Trait name</span><input autoFocus value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. Cursed" /></label><label className="field colour-field"><span>Colour</span><input aria-label="Trait colour" type="color" value={colour} onChange={(event) => setColour(event.target.value)} /></label><label className="field wide"><span>Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this trait mean?" /></label>{error && <div className="error-banner">{error}</div>}<button className="primary" onClick={createTrait}><Plus /> Create and add</button></div>}
-    <div className="trait-library"><div><h3>Trait library</h3><span>{available.length} available</span></div><div className="trait-palette">{available.map((trait) => <button key={trait.id} disabled={!editable} draggable={editable} aria-label={`Add ${trait.label}`} title={trait.description || trait.id} onDragStart={(event) => { event.dataTransfer.setData('application/x-wherewolf-trait', trait.id); event.dataTransfer.setData('text/plain', trait.id) }} onClick={() => addTrait(trait)} style={{ borderColor: trait.colour, backgroundColor: `${trait.colour}18` }}><GripVertical /><i style={{ backgroundColor: trait.colour }} /><span><strong>{trait.label}</strong><small>{trait.id}</small></span></button>)}</div></div>
+    <div className="trait-library"><div><h3>Trait library</h3><span>{available.length} available</span></div><div className="trait-palette">{available.map((trait) => <button key={trait.id} data-trait-id={trait.id} disabled={!editable} draggable={editable} aria-label={`Add ${trait.label}`} title={trait.description || trait.id} onPointerDown={() => { document.body.dataset.dragTraitId = trait.id }} onDragStart={(event) => { document.body.dataset.dragTraitId = trait.id; event.currentTarget.dataset.traitDragging = 'true'; setDraggedTraitId(trait.id); event.dataTransfer.setData('application/x-wherewolf-trait', trait.id); event.dataTransfer.setData('text/plain', trait.id) }} onDragEnd={(event) => { addTrait(trait); delete event.currentTarget.dataset.traitDragging; delete document.body.dataset.dragTraitId; setDraggedTraitId('') }} onClick={() => addTrait(trait)} style={{ borderColor: trait.colour, backgroundColor: `${trait.colour}18` }}><GripVertical /><i style={{ backgroundColor: trait.colour }} /><span><strong>{trait.label}</strong><small>{trait.id}</small></span></button>)}</div></div>
   </section>
 }
 

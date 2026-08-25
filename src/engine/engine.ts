@@ -1,4 +1,5 @@
 import { BASE_ROLES, BASE_SCENARIO, roleName } from '../data/base'
+import { FACTION, TRAIT } from '../domain/ids'
 import type {
   AbilityDefinition, ApplyResult, Condition, Effect, GameCommand, GameEvent, GameSession, GameSetup,
   GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
@@ -6,6 +7,7 @@ import type {
 } from '../domain/types'
 
 const clone = <T,>(value: T): T => structuredClone(value)
+const ASSIGN_SPIRIT_ABILITY = 'wherewolf.hidden-motives.system.assign-spirit'
 
 function nextRandom(random: GameState['random']): number {
   let value = random.value | 0
@@ -33,8 +35,15 @@ function roleMap(state: GameState): Map<string, RoleDefinition> {
 
 function roleOf(state: GameState, player: PlayerState): RoleDefinition | undefined { return roleMap(state).get(player.roleId) }
 function factionOf(state: GameState, player: PlayerState): string { return player.factionOverride ?? roleOf(state, player)?.faction ?? 'unknown' }
+function statusIsActive(state: GameState, status: PlayerState['statuses'][number]): boolean {
+  if (status.data?.sourceMustLive && status.sourcePlayerId && !state.players.find((player) => player.id === status.sourcePlayerId)?.alive) return false
+  const requiredStatus = String(status.data?.sourceMustHaveStatus ?? '')
+  if (requiredStatus && status.sourcePlayerId && !state.players.find((player) => player.id === status.sourcePlayerId)?.statuses.some((entry) => entry.id === requiredStatus)) return false
+  return true
+}
+function activeStatuses(state: GameState, player: PlayerState) { return player.statuses.filter((status) => statusIsActive(state, status)) }
 function traitsOf(state: GameState, player: PlayerState): Set<string> {
-  return new Set([...(roleOf(state, player)?.traits ?? []), ...player.statuses.flatMap((status) => status.traits ?? [])])
+  return new Set([...(roleOf(state, player)?.traits ?? []), ...activeStatuses(state, player).flatMap((status) => status.traits ?? [])])
 }
 function hasTrait(state: GameState, playerId: string | undefined, trait: string): boolean {
   const player = state.players.find((item) => item.id === playerId)
@@ -77,7 +86,7 @@ export function validateSetup(setup: GameSetup): ValidationResult {
       if (!scenario.capabilities.includes(capability)) issue(issues, `roles.${entry.id}`, `${entry.meta.name} requires “${capability}”, which ${scenario.meta.name} does not provide.`)
     })
     entry.abilities.flatMap((ability) => ability.effects).forEach((effect) => {
-      const referenced = effect.type === 'transformRole' || effect.type === 'learnRoleIdentity' || effect.type === 'learnRolePresence' ? effect.roleId : undefined
+      const referenced = effect.type === 'transformRole' ? (typeof effect.roleId === 'string' ? effect.roleId : undefined) : effect.type === 'learnRoleIdentity' || effect.type === 'learnRolePresence' ? effect.roleId : undefined
       if (referenced && !known.has(referenced)) issue(issues, `roles.${entry.id}`, `${entry.meta.name} references unavailable role ${referenced}.`)
     })
   })
@@ -137,7 +146,7 @@ export function createInitialState(setup: GameSetup): GameState {
     id: crypto.randomUUID(), schemaVersion: 1, scenarioId: setup.scenarioId, setup: clone(setup), rules,
     packIds: [...setup.packIds], players: [], relationships: [], pipeline: 'setup', phaseIndex: 0,
     phaseId: rules.scenario.setupPipeline[0]?.id ?? '', cycle: 0, random, ballot: [], attacks: [], pendingDeaths: [],
-    pendingAnnouncements: [], personalWinners: [], winningFactions: [], winners: [], gameOver: false, events: [], trace: [],
+    pendingAnnouncements: [], pendingSpiritAssignments: [], personalWinners: [], personalLosers: [], winningFactions: [], winners: [], gameOver: false, events: [], trace: [],
     completedActions: [], acceptedInvalidTallies: 0, facts: {},
   }
   state.players = assignPlayers(setup, state.random)
@@ -202,8 +211,10 @@ function select(state: GameState, selector: Selector, context: EventContext): st
     case 'eventActor': return context.event.actorId ? [context.event.actorId] : []
     case 'eventTarget': return context.event.targetId ? [context.event.targetId] : []
     case 'allPlayers': return state.players.filter(lifeFilter).map((player) => player.id)
+    case 'publicPossibleRoles': return state.setup.publicRoles.map((range) => state.rules.roles.find((role) => role.id === range.roleId)).filter((role): role is RoleDefinition => Boolean(role)).filter((role) => !selector.trait || role.traits.includes(selector.trait)).filter((role) => !selector.activeTrigger || role.abilities.some((ability) => ability.trigger === selector.activeTrigger)).map((role) => role.id)
     case 'trait': return state.players.filter((player) => lifeFilter(player) && hasTrait(state, player.id, selector.trait)).map((player) => player.id)
     case 'faction': return state.players.filter((player) => lifeFilter(player) && factionOf(state, player) === selector.faction).map((player) => player.id)
+    case 'notFaction': return state.players.filter((player) => lifeFilter(player) && factionOf(state, player) !== selector.faction).map((player) => player.id)
     case 'role': return state.players.filter((player) => lifeFilter(player) && player.roleId === selector.roleId).map((player) => player.id)
     case 'relationship': {
       const from = selector.from === 'eventTarget' ? context.event.targetId : context.ownerId
@@ -233,14 +244,32 @@ function conditionMatches(state: GameState, condition: Condition | undefined, co
     const id = condition.subject === 'self' ? context.ownerId : condition.subject === 'actor' ? context.event.actorId : context.event.targetId
     return hasTrait(state, id, condition.trait)
   }
+  if (condition.op === 'hasFaction') {
+    const id = condition.subject === 'self' ? context.ownerId : condition.subject === 'actor' ? context.event.actorId : context.event.targetId
+    const player = state.players.find((item) => item.id === id)
+    return Boolean(player && factionOf(state, player) === condition.faction)
+  }
   if (condition.op === 'hasStatus') {
     const id = condition.subject === 'self' ? context.ownerId : condition.subject === 'actor' ? context.event.actorId : context.event.targetId
-    return Boolean(state.players.find((player) => player.id === id)?.statuses.some((status) => status.id === condition.status))
+    const player = state.players.find((entry) => entry.id === id)
+    return Boolean(player && activeStatuses(state, player).some((status) => status.id === condition.status))
+  }
+  if (condition.op === 'hasRole') {
+    const id = condition.subject === 'self' ? context.ownerId : condition.subject === 'actor' ? context.event.actorId : context.event.targetId
+    return state.players.find((player) => player.id === id)?.roleId === condition.roleId
   }
   if (condition.op === 'isAlive') {
     const id = condition.subject === 'self' ? context.ownerId : condition.subject === 'actor' ? context.event.actorId : context.event.targetId
     return Boolean(state.players.find((player) => player.id === id)?.alive) === (condition.value ?? true)
   }
+  if (condition.op === 'ownerInBallot') return state.ballot.includes(context.ownerId ?? '') === (condition.value ?? true)
+  if (condition.op === 'targetRoleHasTrait') {
+    const player = state.players.find((item) => item.id === context.event.targetId)
+    const definition = player ? roleOf(state, player) : state.rules.roles.find((role) => role.id === context.event.targetId)
+    return Boolean(definition?.traits.includes(condition.trait))
+  }
+  if (condition.op === 'packSelected') return state.packIds.includes(condition.packId)
+  if (condition.op === 'cycle') return compare(state.cycle, condition.compare, condition.value)
   if (condition.op === 'state') return compare(state.players.find((player) => player.id === context.ownerId)?.roleState[condition.key], condition.compare, condition.value)
   if (condition.op === 'fact') return compare(state.facts[condition.key], condition.compare, condition.value)
   if (condition.op === 'event') return compare(context.event.data?.[condition.field], condition.compare, condition.value)
@@ -257,13 +286,21 @@ function constantValue(state: GameState, ownerId: string | undefined, key: strin
   return state.rules.scenario.roleOverrides[definition?.id ?? '']?.[key] ?? definition?.constants.find((entry) => entry.key === key)?.default
 }
 
+function numericValue(state: GameState, value: Extract<Effect, { type: 'modifyVotesReceived' }>['value'], context: EventContext): number {
+  if (typeof value === 'number') return value
+  return select(state, value.count, context).length * (value.multiplier ?? 1) + (value.add ?? 0)
+}
+
 function abilityOwners(state: GameState, trigger: AbilityDefinition['trigger']): Array<{ owner: PlayerState; ability: AbilityDefinition }> {
   const result: Array<{ owner: PlayerState; ability: AbilityDefinition }> = []
-  state.players.forEach((owner) => roleOf(state, owner)?.abilities.filter((ability) => ability.trigger === trigger).forEach((ability) => result.push({ owner, ability })))
+  state.players.forEach((owner) => {
+    roleOf(state, owner)?.abilities.filter((ability) => ability.trigger === trigger).forEach((ability) => result.push({ owner, ability }))
+    activeStatuses(state, owner).flatMap((status) => status.abilities ?? []).filter((ability) => ability.trigger === trigger).forEach((ability) => result.push({ owner, ability }))
+  })
   return result.sort((left, right) => (left.ability.order ?? 100) - (right.ability.order ?? 100) || left.ability.id.localeCompare(right.ability.id) || left.owner.id.localeCompare(right.owner.id))
 }
 
-function playerLabel(state: GameState, id: string): string { return state.players.find((player) => player.id === id)?.name ?? roleName(id) }
+function playerLabel(state: GameState, id: string): string { return state.players.find((player) => player.id === id)?.name ?? state.rules.roles.find((role) => role.id === id)?.meta.name ?? roleName(id) }
 
 function formatList(items: string[]): string {
   if (items.length < 2) return items[0] ?? ''
@@ -279,7 +316,13 @@ function killPlayer(state: GameState, playerId: string, cause: string, context: 
     trace(state, 'Delayed death', `${player.name} will die next morning if the original death remains.`, [cause], context.event.id)
     return
   }
+  const wasCorrupt = hasTrait(state, playerId, TRAIT.corrupt)
   player.alive = false
+  const deathMetadata = (state.facts.deathMetadata && typeof state.facts.deathMetadata === 'object' ? state.facts.deathMetadata : {}) as Record<string, unknown>
+  deathMetadata[playerId] = { cause, wasCorrupt, roleId: player.roleId, faction: factionOf(state, player) }
+  state.facts.deathMetadata = deathMetadata
+  const spiritRolesAvailable = state.rules.roles.some((role) => role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
+  if (spiritRolesAvailable && !hasTrait(state, playerId, TRAIT.spirit) && !state.pendingSpiritAssignments.includes(playerId)) state.pendingSpiritAssignments.push(playerId)
   const nightDeaths = Array.isArray(state.facts.nightDeaths) ? state.facts.nightDeaths as string[] : []
   if (state.phaseId.includes('night')) state.facts.nightDeaths = [...new Set([...nightDeaths, playerId])]
   const event = emit(state, 'death.resolved', `${player.name} died: ${cause}.`, 'moderator', { targetId: playerId, data: { cause } })
@@ -291,14 +334,29 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
   switch (effect.type) {
     case 'inspectTrait': {
       targets.forEach((id) => {
-        const result = hasTrait(state, id, effect.trait)
-        state.pendingAnnouncements.push({ message: `${playerLabel(state, id)}: ${result ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' })
+        const littleFolkImmune = hasTrait(state, context.ownerId, TRAIT.mystic) && hasTrait(state, id, TRAIT.littleFolk)
+        const inverted = Boolean(context.ownerId && activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!).some((status) => status.data?.invertInformation))
+        const result = inverted ? !hasTrait(state, id, effect.trait) : hasTrait(state, id, effect.trait)
+        state.pendingAnnouncements.push({ message: littleFolkImmune ? `${playerLabel(state, id)}: NO RESULT` : `${playerLabel(state, id)}: ${result ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' })
         if (effect.rememberAs) state.facts[effect.rememberAs] = result
       }); return `inspected ${targets.map((id) => playerLabel(state, id)).join(', ')}`
     }
     case 'inspectFaction': {
-      targets.forEach((id) => state.pendingAnnouncements.push({ message: `${playerLabel(state, id)}: ${factionOf(state, state.players.find((item) => item.id === id)!) === effect.faction ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' }))
+      targets.forEach((id) => {
+        const littleFolkImmune = hasTrait(state, context.ownerId, TRAIT.mystic) && hasTrait(state, id, TRAIT.littleFolk)
+        const inverted = Boolean(context.ownerId && activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!).some((status) => status.data?.invertInformation))
+        const matches = factionOf(state, state.players.find((item) => item.id === id)!) === effect.faction
+        state.pendingAnnouncements.push({ message: littleFolkImmune ? `${playerLabel(state, id)}: NO RESULT` : `${playerLabel(state, id)}: ${(inverted ? !matches : matches) ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' })
+      })
       return 'faction information recorded'
+    }
+    case 'inspectStatus': {
+      targets.forEach((id) => {
+        const player = state.players.find((item) => item.id === id)
+        const status = player ? activeStatuses(state, player).find((entry) => entry.id === effect.status) : undefined
+        state.pendingAnnouncements.push({ message: `${playerLabel(state, id)}: ${status?.name ?? effect.negative}`, category: 'Private result', visibility: 'moderator' })
+      })
+      return 'status information recorded'
     }
     case 'learnRolesAbsent': {
       const names = context.chosen.map((id) => state.rules.roles.find((role) => role.id === id)?.meta.name ?? id)
@@ -316,6 +374,24 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
       const grouped = Boolean(context.participantIds?.length)
       const members = state.players.filter((player) => player.alive && factionOf(state, player) === effect.faction && (grouped || player.id !== context.ownerId)).map((player) => player.name)
       state.pendingAnnouncements.push({ message: `${grouped ? 'Present together' : 'Known allies'}: ${members.join(', ') || 'none'}`, category: 'Private result', visibility: 'moderator' }); return `learned ${effect.faction} members`
+    }
+    case 'learnPlayers': {
+      const names = targets.map((id) => playerLabel(state, id))
+      state.pendingAnnouncements.push({ message: `${effect.label}: ${names.join(', ') || 'none'}`, category: 'Private result', visibility: 'moderator' })
+      return `${effect.label}: ${names.join(', ') || 'none'}`
+    }
+    case 'learnCount': {
+      state.pendingAnnouncements.push({ message: `${effect.label}: ${targets.length}`, category: 'Private result', visibility: 'moderator' })
+      return `${effect.label}: ${targets.length}`
+    }
+    case 'learnPresence': {
+      const present = targets.length > 0
+      state.pendingAnnouncements.push({ message: `${effect.label}: ${present ? 'present' : 'absent'}`, category: 'Private result', visibility: 'moderator' })
+      return `${effect.label}: ${present ? 'present' : 'absent'}`
+    }
+    case 'conditional': {
+      const branch = conditionMatches(state, effect.condition, context) ? effect.effects : effect.otherwise ?? []
+      return branch.map((child) => applyEffect(state, child, context)).join('; ') || 'condition had no effect'
     }
     case 'addStatus': {
       targets.forEach((id) => {
@@ -339,7 +415,12 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
       if (effect.limitKey && context.ownerId) state.players.find((item) => item.id === context.ownerId)!.roleState[effect.limitKey] = true
       emit(state, 'command', `${player.name} was revived.`, 'moderator', { targetId: id })
     }); return `revived ${targets.map((id) => playerLabel(state, id)).join(', ')}`
-    case 'transformRole': targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player) player.roleId = effect.roleId }); return `transformed role to ${roleName(effect.roleId)}`
+    case 'transformRole': {
+      const nextRoleId = typeof effect.roleId === 'string' ? effect.roleId : context.chosen[0]
+      if (!nextRoleId || !state.rules.roles.some((role) => role.id === nextRoleId)) return 'no valid transformation role selected'
+      targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player) { player.roleId = nextRoleId; player.factionOverride = undefined } })
+      return `transformed role to ${state.rules.roles.find((role) => role.id === nextRoleId)?.meta.name ?? nextRoleId}`
+    }
     case 'changeFaction': targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player) player.factionOverride = effect.faction }); return `changed faction to ${effect.faction}`
     case 'linkRelationship': targets.forEach((id) => {
       if (!context.ownerId) return
@@ -349,9 +430,27 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     }); return `linked relationship with ${targets.map((id) => playerLabel(state, id)).join(', ')}`
     case 'modifyVotesReceived': {
       const value = context.voteValue ?? 0
-      let result = effect.operation === 'multiply' ? value * effect.value : effect.operation === 'add' ? value + effect.value : effect.value
+      const modifier = numericValue(state, effect.value, context)
+      let result = effect.operation === 'multiply' ? value * modifier : effect.operation === 'add' ? value + modifier : modifier
       result = effect.rounding === 'ceil' ? Math.ceil(result) : effect.rounding === 'floor' ? Math.floor(result) : effect.rounding === 'round' ? Math.round(result) : result
-      context.voteValue = result; return `votes ${value} → ${result}`
+      context.voteValue = Math.max(0, result); return `votes ${value} → ${Math.max(0, result)}`
+    }
+    case 'forceBallot': {
+      const forced = Array.isArray(state.facts.forcedBallot) ? state.facts.forcedBallot as string[] : []
+      state.facts.forcedBallot = [...new Set([...forced, ...targets])]
+      return `forced onto Ballot: ${targets.map((id) => playerLabel(state, id)).join(', ')}`
+    }
+    case 'grantExtraVotes': {
+      const key = `extraVotes:${effect.vote}:${state.cycle}`
+      state.facts[key] = Number(state.facts[key] ?? 0) + numericValue(state, effect.amount, context)
+      return `added ${numericValue(state, effect.amount, context)} expected ${effect.vote} votes`
+    }
+    case 'suppressAction': {
+      targets.forEach((id) => {
+        const player = state.players.find((item) => item.id === id); if (!player) return
+        player.statuses.push({ id: `wherewolf.core.status.suppress-${effect.trigger}-${state.cycle}`, name: 'Action suppressed', duration: effect.duration ?? (effect.trigger === 'day.action' ? 'day' : 'night'), appliedCycle: state.cycle, sourcePlayerId: context.ownerId, data: { suppressTrigger: effect.trigger } })
+      })
+      return `suppressed ${effect.trigger}`
     }
     case 'replaceQualifiedCandidate': {
       const guarded = select(state, effect.guarded, context)[0], replacement = select(state, effect.replacement, context)[0]
@@ -362,7 +461,17 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     case 'announce': state.pendingAnnouncements.push({ message: effect.message, category: effect.category ?? 'Announcement', visibility: effect.visibility }); return effect.message
     case 'setState': if (context.ownerId) state.players.find((item) => item.id === context.ownerId)!.roleState[effect.key] = effect.value; return `set ${effect.key}`
     case 'incrementState': if (context.ownerId) { const player = state.players.find((item) => item.id === context.ownerId)!; player.roleState[effect.key] = Number(player.roleState[effect.key] ?? 0) + effect.amount }; return `incremented ${effect.key}`
+    case 'setStateCount': if (context.ownerId) state.players.find((item) => item.id === context.ownerId)!.roleState[effect.key] = targets.length; return `set ${effect.key} to ${targets.length}`
     case 'personalWin': targets.forEach((id) => { if (!state.personalWinners.some((winner) => winner.playerId === id)) state.personalWinners.push({ playerId: id, reason: effect.reason }) }); return `personal victory: ${effect.reason}`
+    case 'personalLose': targets.forEach((id) => { if (!state.personalLosers.some((loser) => loser.playerId === id)) state.personalLosers.push({ playerId: id, reason: effect.reason }) }); return `personal loss: ${effect.reason}`
+    case 'endGame': {
+      const winners = effect.winningTrait ? state.players.filter((player) => hasTrait(state, player.id, effect.winningTrait!)).map((player) => player.id) : effect.winningFaction ? state.players.filter((player) => factionOf(state, player) === effect.winningFaction).map((player) => player.id) : []
+      state.winners = [...new Set([...winners, ...state.personalWinners.map((winner) => winner.playerId)])]
+      state.winningFactions = effect.winningFaction ? [effect.winningFaction] : []
+      state.gameOver = true
+      emit(state, 'victory.check', `Game over. ${effect.reason}`, 'public', { data: { winners: state.winners } })
+      return `game ended: ${effect.reason}`
+    }
     case 'cancelNext': {
       if (effect.event === 'burn') state.facts.cancelBurnCycle = state.cycle + 1
       else if (effect.duration === 'next-night') state.facts.cancelShadowAttackCycle = state.cycle + 1
@@ -376,6 +485,7 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
 function dispatch(state: GameState, trigger: AbilityDefinition['trigger'], context: Omit<EventContext, 'ownerId'>): EventContext {
   let shared = context as EventContext
   abilityOwners(state, trigger).forEach(({ owner, ability }) => {
+    if (['setup.action', 'day.action', 'night.action'].includes(trigger) && !['passive', 'status'].includes(ability.kind)) return
     if (!owner.alive && !(trigger === 'victory.check' || (context.event.targetId === owner.id && ['death.resolved', 'burn.resolved'].includes(trigger)))) return
     const scoped = { ...shared, ownerId: owner.id }
     if (!conditionMatches(state, ability.condition, scoped)) return
@@ -395,6 +505,7 @@ function targetCandidates(state: GameState, actor: PlayerState, ability: Ability
   if (!ability.target) return []
   const event = { id: '', sequence: 0, type: ability.trigger, cycle: state.cycle, phaseId: state.phaseId, visibility: 'moderator', message: '' } as GameEvent
   let candidates = select(state, ability.target.selector, { event, ownerId: actor.id, chosen: [], prevented: false })
+  if (ability.target.selector.kind === 'publicPossibleRoles') candidates = candidates.filter((id) => id !== actor.roleId && !state.rules.roles.find((role) => role.id === id)?.categories.includes('Status'))
   if (ability.target.excludeSelf) candidates = candidates.filter((id) => id !== actor.id)
   if (ability.target.excludeTraits?.length) candidates = candidates.filter((id) => !ability.target!.excludeTraits!.some((trait) => hasTrait(state, id, trait)))
   return candidates
@@ -408,7 +519,11 @@ function eligibleActions(state: GameState): Array<{ actor: PlayerState; ability:
   const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
   return abilityOwners(state, phase.trigger).filter(({ owner, ability }) => {
     const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
-    return owner.alive && barrierMatches && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id)) && !(ability.once === 'game' && owner.roleState[`ability-used:${ability.id}`])
+    const canActWhileDead = hasTrait(state, owner.id, TRAIT.spirit)
+    const suppressed = activeStatuses(state, owner).some((status) => status.data?.suppressTrigger === phase.trigger && status.appliedCycle === state.cycle)
+    const event = { id: '', sequence: 0, type: ability.trigger, cycle: state.cycle, phaseId: state.phaseId, visibility: 'moderator', message: '' } as GameEvent
+    const condition = conditionMatches(state, ability.condition, { event, ownerId: owner.id, chosen: [], prevented: false })
+    return (owner.alive || canActWhileDead) && !suppressed && condition && barrierMatches && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id)) && !(ability.once === 'game' && owner.roleState[`ability-used:${ability.id}`])
   }).sort((left, right) => {
     const a = order.indexOf(left.ability.id), b = order.indexOf(right.ability.id)
     return (a < 0 ? 9999 : a) - (b < 0 ? 9999 : b) || (left.ability.order ?? 100) - (right.ability.order ?? 100)
@@ -425,6 +540,43 @@ function activeActions(state: GameState): Array<{ actor: PlayerState; ability: A
   })
 }
 
+type ScheduledAction = { actor?: PlayerState; ability: AbilityDefinition; role: RoleDefinition; callOnly: boolean; key: string }
+
+function callKey(state: GameState, ability: AbilityDefinition): string { return `${state.pipeline}:${state.cycle}:${state.phaseId}:call:${ability.simultaneous?.id ?? ability.id}` }
+
+function scheduledActions(state: GameState): ScheduledAction[] {
+  const phase = currentPhase(state)
+  if (!phase || phase.type !== 'role-actions') return []
+  const actual = activeActions(state)
+  const used = new Set<string>()
+  const possibleAbilities = (phase.trigger === 'day.action' ? [] : state.setup.publicRoles).flatMap((range) => {
+    const role = state.rules.roles.find((entry) => entry.id === range.roleId)
+    return role ? role.abilities.filter((ability) => ability.trigger === phase.trigger).map((ability) => ({ role, ability })) : []
+  }).filter(({ ability }) => {
+    const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
+    return barrierMatches && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id))
+  })
+  const possible = new Map<string, { role: RoleDefinition; ability: AbilityDefinition }>()
+  possibleAbilities.forEach((entry) => possible.set(entry.ability.simultaneous?.id ?? entry.ability.id, entry))
+  const result: ScheduledAction[] = []
+  possible.forEach(({ role, ability }, group) => {
+    const matches = actual.filter((entry) => (entry.ability.simultaneous?.id ?? entry.ability.id) === group)
+    if (matches.length) matches.forEach((entry) => { used.add(`${entry.actor.id}:${entry.ability.id}`); result.push({ ...entry, role: roleOf(state, entry.actor) ?? role, callOnly: false, key: actionKey(state, entry.actor.id, entry.ability.id) }) })
+    else result.push({ role, ability, callOnly: true, key: callKey(state, ability) })
+  })
+  actual.filter((entry) => !used.has(`${entry.actor.id}:${entry.ability.id}`)).forEach((entry) => {
+    const sourceRole = state.rules.roles.find((role) => role.abilities.some((ability) => ability.id === entry.ability.id)) ?? roleOf(state, entry.actor)
+    if (sourceRole) result.push({ ...entry, role: sourceRole, callOnly: false, key: actionKey(state, entry.actor.id, entry.ability.id) })
+  })
+  const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
+  return result.sort((left, right) => {
+    const a = order.indexOf(left.ability.id), b = order.indexOf(right.ability.id)
+    return (a < 0 ? 9999 : a) - (b < 0 ? 9999 : b) || (left.ability.order ?? 100) - (right.ability.order ?? 100) || left.ability.id.localeCompare(right.ability.id)
+  })
+}
+
+function nextScheduledAction(state: GameState): ScheduledAction | undefined { return scheduledActions(state).find((entry) => !state.completedActions.includes(entry.key)) }
+
 function simultaneousActions(state: GameState, ability: AbilityDefinition): Array<{ actor: PlayerState; ability: AbilityDefinition }> {
   if (!ability.simultaneous) return []
   return eligibleActions(state).filter(({ ability: candidate }) => candidate.simultaneous?.id === ability.simultaneous?.id)
@@ -432,11 +584,21 @@ function simultaneousActions(state: GameState, ability: AbilityDefinition): Arra
 
 function candidateCanVote(state: GameState, id: string): boolean {
   const player = state.players.find((entry) => entry.id === id); if (!player) return false
-  return roleOf(state, player)?.abilities.some((ability) => ability.trigger === 'vote.beforeTally' && ability.effects.some((effect) => effect.type === 'allowCandidateVote')) ?? false
+  return hasTrait(state, id, TRAIT.ballotVoter) || abilityOwners(state, 'vote.beforeTally').some(({ owner, ability }) => owner.id === id && ability.effects.some((effect) => effect.type === 'allowCandidateVote'))
+}
+
+function eligibleVoter(state: GameState, player: PlayerState): boolean {
+  if (!player.alive && !hasTrait(state, player.id, TRAIT.spirit)) return false
+  return !activeStatuses(state, player).some((status) => {
+    const blockedBy = String(status.data?.cannotVoteWhileRoleAlive ?? '')
+    return blockedBy && state.players.some((candidate) => candidate.alive && candidate.roleId === blockedBy)
+  })
 }
 
 function expectedVotes(state: GameState, candidates: string[], ballot: boolean): number {
-  return state.players.filter((player) => player.alive && (!ballot || !candidates.includes(player.id) || candidateCanVote(state, player.id))).length
+  const kind = ballot ? 'ballot' : 'nomination'
+  const base = state.players.filter((player) => eligibleVoter(state, player) && (!ballot || !candidates.includes(player.id) || candidateCanVote(state, player.id))).length
+  return base + Number(state.facts[`extraVotes:${kind}:${state.cycle}`] ?? 0)
 }
 
 export function availableCommand(state: GameState): PendingCommand {
@@ -446,19 +608,32 @@ export function availableCommand(state: GameState): PendingCommand {
   }
   const result = state.pendingAnnouncements.find((announcement) => announcement.visibility === 'moderator')
   if (result) return { type: 'advance', title: result.title ?? (result.category === 'Private result' ? 'Result' : result.category), description: result.message, actionLabel: result.actionLabel }
+  const spiritTarget = state.pendingSpiritAssignments.find((id) => {
+    const player = state.players.find((item) => item.id === id)
+    return player && !player.alive && !hasTrait(state, id, TRAIT.spirit)
+  })
+  if (spiritTarget) {
+    const spiritRoles = state.rules.roles.filter((role) => role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
+    return { type: 'choose', actorId: spiritTarget, abilityId: ASSIGN_SPIRIT_ABILITY, title: `${playerLabel(state, spiritTarget)} died`, instructions: 'Decide whether to give this player a Spirit role. If you assign one, show the player that role before play continues.', candidates: spiritRoles.map((role) => role.id), min: 0, max: 1, allowNone: true }
+  }
   const phase = currentPhase(state)
   if (!phase) return { type: 'advance', title: 'Continue', description: 'Continue with the game.', actionLabel: 'Continue' }
   if (phase.type === 'role-actions') {
-    const next = activeActions(state).find(({ actor, ability }) => !state.completedActions.includes(actionKey(state, actor.id, ability.id)))
+    const next = nextScheduledAction(state)
     if (!next) {
       if (state.pipeline === 'setup') return { type: 'advance', title: 'First night complete', description: 'Ask everyone to wake up and begin the first day.', actionLabel: 'Begin Day 1' }
       if (phase.dependencyBarrier === 'after-attack-resolution') return { type: 'advance', title: 'The night is complete', description: 'Continue to the morning result.', actionLabel: 'Continue to morning' }
       return { type: 'advance', title: 'All active roles may sleep', description: 'All scheduled actions have been recorded. Continue to the night’s outcome.', actionLabel: 'Continue' }
     }
-    const candidates = targetCandidates(state, next.actor, next.ability)
+    if (next.callOnly) {
+      const callName = next.ability.simultaneous?.label ?? next.role.meta.name
+      return { type: 'advance', title: `Call ${callName}`, description: `Say “${callName}, wake up.” Pause for the normal response. There is no action to record in the app, so continue when the call is complete.`, actionLabel: 'Continue night order' }
+    }
+    const actor = next.actor!
+    const candidates = targetCandidates(state, actor, next.ability)
     const absentEffect = next.ability.effects.find((effect) => effect.type === 'learnRolesAbsent')
-    const minimum = absentEffect?.type === 'learnRolesAbsent' ? (typeof absentEffect.minimum === 'object' ? Number(constantValue(state, next.actor.id, absentEffect.minimum.constant)) : absentEffect.minimum) : next.ability.target?.min ?? 0
-    const maxFromStatus = next.actor.statuses.map((status) => Number(status.data?.maxTargets ?? 0)).reduce((a, b) => Math.max(a, b), 0)
+    const minimum = absentEffect?.type === 'learnRolesAbsent' ? (typeof absentEffect.minimum === 'object' ? Number(constantValue(state, actor.id, absentEffect.minimum.constant)) : absentEffect.minimum) : next.ability.target?.min ?? 0
+    const maxFromStatus = actor.statuses.map((status) => Number(status.data?.maxTargets ?? 0)).reduce((a, b) => Math.max(a, b), 0)
     const maximum = absentEffect?.type === 'learnRolesAbsent' ? candidates.length : Math.max(next.ability.target?.max ?? minimum, maxFromStatus)
     const participants = [...new Map(simultaneousActions(state, next.ability).map(({ actor }) => [actor.id, actor])).values()]
     const information = next.ability.effects.flatMap((effect) => {
@@ -467,7 +642,9 @@ export function availableCommand(state: GameState): PendingCommand {
       const matches = state.players.filter((player) => player.roleId === effect.roleId).map((player) => player.name)
       return [{ label: definition?.meta.name ?? effect.roleId.split('.').at(-1) ?? effect.roleId, value: matches.join(', ') || 'Not in play', status: matches.length ? 'in-play' as const : 'not-in-play' as const }]
     })
-    return { type: 'choose', actorId: next.actor.id, abilityId: next.ability.id, title: next.ability.simultaneous ? `${next.ability.simultaneous.label} · ${next.ability.name}` : `${next.actor.name} · ${next.ability.name}`, instructions: next.ability.instructions ?? 'Resolve this role action.', candidates, min: minimum, max: maximum, allowNone: next.ability.target?.allowNone ?? minimum === 0, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, information: information.length ? information : undefined }
+    const callName = next.ability.simultaneous?.label ?? next.role.meta.name
+    const instructions = `Say “${callName}, wake up.” ${next.ability.instructions ?? 'Resolve this role action.'}`
+    return { type: 'choose', actorId: actor.id, abilityId: next.ability.id, title: next.ability.simultaneous ? `${next.ability.simultaneous.label} · ${next.ability.name}` : `${actor.name} · ${next.ability.name}`, instructions, candidates, min: minimum, max: maximum, allowNone: next.ability.target?.allowNone ?? minimum === 0, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, information: information.length ? information : undefined }
   }
   if (phase.type === 'aggregate-vote') {
     const candidates = phase.vote === 'ballot' ? state.ballot.filter((id) => state.players.find((player) => player.id === id)?.alive) : state.players.filter((player) => player.alive).map((player) => player.id)
@@ -506,11 +683,13 @@ function tallyVote(state: GameState, raw: Record<string, number>, kind: VoteStat
 
 function qualifyBallot(state: GameState) {
   const totals = state.votes?.effective ?? {}
+  const forced = (Array.isArray(state.facts.forcedBallot) ? state.facts.forcedBallot as string[] : []).filter((id) => state.players.find((player) => player.id === id)?.alive)
   const ranked = Object.entries(totals).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1])
-  if (!ranked.length) { state.ballot = []; return }
+  if (!ranked.length) { state.ballot = [...new Set(forced)]; delete state.facts.forcedBallot; return }
   const top = ranked[0][1], leaders = ranked.filter(([, value]) => value === top).map(([id]) => id)
   let qualified = leaders.length > 1 ? leaders : [...leaders, ...ranked.filter(([, value]) => value === ranked.find(([, candidate]) => candidate < top)?.[1]).map(([id]) => id)]
-  qualified = [...new Set(qualified)]
+  qualified = [...new Set([...qualified, ...forced])]
+  delete state.facts.forcedBallot
   for (const targetId of [...qualified]) {
     const event = emit(state, 'ballot.qualified', `${playerLabel(state, targetId)} qualified for the Ballot.`, 'public', { targetId })
     const context = dispatch(state, 'ballot.qualified', { event, chosen: [], prevented: false, ballot: qualified })
@@ -555,7 +734,8 @@ function resolveBurn(state: GameState) {
 }
 
 function protectionReason(state: GameState, targetId: string, attackType: string): string | undefined {
-  return state.players.find((player) => player.id === targetId)?.statuses.find((status) => status.data?.attackType === attackType)?.name
+  const player = state.players.find((entry) => entry.id === targetId)
+  return player ? activeStatuses(state, player).find((status) => status.data?.attackType === attackType)?.name : undefined
 }
 
 function resolveAttack(state: GameState, attack: GameState['attacks'][number]) {
@@ -617,6 +797,10 @@ function evaluateVictory(state: GameState) {
   resolveMorningHiddenState(state)
   const morningEvent = emit(state, 'morning.beforeVictory', 'Resolving hidden morning role effects.', 'moderator')
   dispatch(state, 'morning.beforeVictory', { event: morningEvent, chosen: [], prevented: false })
+  if (state.gameOver) return
+  const checkEvent = emit(state, 'victory.check', 'Checking role and scenario victory conditions.', 'moderator')
+  dispatch(state, 'victory.check', { event: checkEvent, chosen: [], prevented: false })
+  if (state.gameOver) return
   let terminal: { faction: string; reason: string; type: string } | undefined
   for (const rule of [...state.rules.scenario.victoryRules].sort((a, b) => a.priority - b.priority)) {
     const alive = state.players.filter((player) => player.alive)
@@ -633,9 +817,20 @@ function evaluateVictory(state: GameState) {
   if (!terminal) return
   const victoryEvent = emit(state, 'victory.check', terminal.reason, 'moderator', { data: { winningFaction: terminal.faction } })
   state.relationships.filter((relationship) => relationship.type.endsWith('.guarded')).forEach((relationship) => dispatch(state, 'victory.check', { event: { ...victoryEvent, targetId: relationship.to }, chosen: [], prevented: false }))
-  const factionWinners = state.players.filter((player) => factionOf(state, player) === terminal!.faction).map((player) => player.id)
+  const alignment = state.rules.scenario.factions.find((faction) => faction.id === terminal!.faction)?.alignment
+  const littleFolkAlive = state.players.filter((player) => player.alive && hasTrait(state, player.id, TRAIT.littleFolk)).length
+  const factionWinners = state.players.filter((player) => {
+    const playerAlignment = state.rules.scenario.factions.find((faction) => faction.id === factionOf(state, player))?.alignment
+    if (factionOf(state, player) === terminal!.faction || (alignment === 'human' && playerAlignment === 'human')) return true
+    if (alignment === 'human' && hasTrait(state, player.id, TRAIT.anyHumanWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
+    if (alignment === 'shadow' && hasTrait(state, player.id, TRAIT.anyShadowWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
+    if ([FACTION.vampire, FACTION.nosferatu].includes(terminal!.faction as typeof FACTION.vampire | typeof FACTION.nosferatu) && hasTrait(state, player.id, TRAIT.undeadSupport)) return true
+    const spiritAlignment = activeStatuses(state, player).find((status) => status.traits?.includes(TRAIT.spirit))?.data?.winningAlignment
+    return spiritAlignment === alignment
+  }).map((player) => player.id)
   const lovers = terminal.type !== 'parity' ? state.relationships.filter((rel) => rel.type.endsWith('.romeo') && state.players.find((player) => player.id === rel.from)?.alive && state.players.find((player) => player.id === rel.to)?.alive).flatMap((rel) => [rel.from, rel.to]) : []
-  state.winners = [...new Set([...factionWinners, ...lovers, ...state.personalWinners.map((winner) => winner.playerId)])]
+  const losers = new Set(state.personalLosers.map((loser) => loser.playerId))
+  state.winners = [...new Set([...factionWinners, ...lovers, ...state.personalWinners.map((winner) => winner.playerId)])].filter((id) => !losers.has(id))
   state.winningFactions = [...new Set([terminal.faction, ...(lovers.length ? ['wherewolf.base.faction.lovers'] : [])])]
   state.gameOver = true
   emit(state, 'victory.check', `Game over. ${terminal.reason}`, 'public', { data: { winners: state.winners } })
@@ -667,7 +862,7 @@ function settleAutomaticPhases(state: GameState) {
     const phase = currentPhase(state)
     if (!phase) return
     if (phase.type === 'role-actions') {
-      const hasAction = activeActions(state).some(({ actor, ability }) => !state.completedActions.includes(actionKey(state, actor.id, ability.id)))
+      const hasAction = Boolean(nextScheduledAction(state))
       if (hasAction) return
       advancePhase(state); continue
     }
@@ -675,10 +870,10 @@ function settleAutomaticPhases(state: GameState) {
       qualifyBallot(state)
       if (state.ballot.length <= 1) {
         resolveBurn(state)
+        const phases = state.rules.scenario.cyclePipeline
+        const burnIndex = phases.findIndex((candidate, index) => index > state.phaseIndex && candidate.type === 'burn-resolution')
+        if (burnIndex >= 0) state.phaseIndex = burnIndex
         advancePhase(state)
-        const ballotVote = currentPhase(state)
-        if (ballotVote?.type === 'aggregate-vote' && ballotVote.vote === 'ballot') advancePhase(state)
-        if (currentPhase(state)?.type === 'burn-resolution') advancePhase(state)
       } else {
         const names = state.ballot.map((id) => playerLabel(state, id))
         queueModeratorStep(state, `On the ballot: ${formatList(names)}.`, 'Tell the village who is on the Ballot. Only these players can receive votes in the second vote.', 'Begin Ballot vote')
@@ -706,7 +901,13 @@ function executeAdvance(state: GameState) {
   }
   const phase = currentPhase(state)
   if (!phase) { advancePhase(state); settleAutomaticPhases(state); return }
-  if (phase.type === 'pause' || phase.type === 'role-actions') advancePhase(state)
+  if (phase.type === 'role-actions') {
+    const next = nextScheduledAction(state)
+    if (next?.callOnly) {
+      if (!state.completedActions.includes(next.key)) state.completedActions.push(next.key)
+      trace(state, 'Night order call', `${next.ability.simultaneous?.label ?? next.role.meta.name} was called; no action was recorded.`)
+    } else advancePhase(state)
+  } else if (phase.type === 'pause') advancePhase(state)
   settleAutomaticPhases(state)
 }
 
@@ -737,14 +938,31 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
     if (pending.type !== 'choose' || pending.actorId !== command.actorId || pending.abilityId !== command.abilityId) throw new Error('That action is no longer current.')
     const unique = [...new Set(command.targets)]
     if (unique.length < pending.min || unique.length > pending.max || unique.some((target) => !pending.candidates.includes(target))) throw new Error(`Choose ${pending.min}–${pending.max} legal target(s).`)
+    if (command.abilityId === ASSIGN_SPIRIT_ABILITY) {
+      const player = state.players.find((item) => item.id === command.actorId)
+      const spirit = unique[0] ? state.rules.roles.find((role) => role.id === unique[0] && role.categories.includes('Status') && role.traits.includes(TRAIT.spirit)) : undefined
+      state.pendingSpiritAssignments = state.pendingSpiritAssignments.filter((id) => id !== command.actorId)
+      if (player && spirit) {
+        const metadata = ((state.facts.deathMetadata as Record<string, unknown> | undefined)?.[player.id] ?? {}) as Record<string, unknown>
+        const template = spirit.statuses?.[0]
+        const templateData = template?.data ?? {}
+        const causes = Array.isArray(templateData.shadowDeathCauses) ? templateData.shadowDeathCauses.map(String) : []
+        const winningAlignment = templateData.winningAlignment ?? (templateData.winnerFromCorrupt ? metadata.wasCorrupt ? 'shadow' : 'human' : causes.length ? causes.includes(String(metadata.cause)) ? 'shadow' : 'human' : undefined)
+        player.statuses.push({ id: 'wherewolf.hidden-motives.status.spirit', name: spirit.meta.name, traits: spirit.traits, abilities: clone(spirit.abilities), duration: 'permanent', appliedCycle: state.cycle, data: { ...templateData, grantedRoleId: spirit.id, ...metadata, winningAlignment } })
+        trace(state, 'Spirit assignment', `${player.name} received ${spirit.meta.name}.`, [`Granted status role ${spirit.meta.name}`])
+      } else if (player) trace(state, 'Spirit assignment', `${player.name} was not given a Spirit role.`)
+      settleAutomaticPhases(state)
+    } else {
     const actor = state.players.find((player) => player.id === command.actorId)!
     const ability = roleOf(state, actor)?.abilities.find((entry) => entry.id === command.abilityId)
+      ?? actor.statuses.flatMap((status) => status.abilities ?? []).find((entry) => entry.id === command.abilityId)
       ?? state.rules.roles.flatMap((role) => role.abilities).find((entry) => entry.id === command.abilityId)
     if (!ability) throw new Error('Ability definition is unavailable.')
     const groupedActions = ability.simultaneous ? simultaneousActions(state, ability) : []
     const participants = [...new Map(groupedActions.map(({ actor: participant }) => [participant.id, participant])).values()]
     const sourceLabel = ability.simultaneous?.label ?? actor.name
     const event = emit(state, ability.trigger, `${sourceLabel} resolved ${ability.name}.`, 'moderator', { actorId: actor.id, targets: unique, targetId: unique[0], data: { abilityId: ability.id, abilityIds: groupedActions.map(({ ability: groupedAbility }) => groupedAbility.id), participantIds: participants.map((participant) => participant.id) } })
+    dispatch(state, ability.trigger, { event, chosen: unique, prevented: false })
     const announcementStart = state.pendingAnnouncements.length
     const actionsToExecute = groupedActions.length ? groupedActions : [{ actor, ability }]
     const effects = actionsToExecute.flatMap(({ actor: owner, ability: groupedAbility }) => {
@@ -765,6 +983,7 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
     const resolution = unique.length ? `Targets: ${unique.map((id) => playerLabel(state, id)).join(', ')}.` : participants.length ? `Participants: ${participants.map((participant) => participant.name).join(', ')}.` : 'No target selected.'
     trace(state, `${sourceLabel} · ${ability.name}`, resolution, [...new Set(effects)], event.id)
     settleAutomaticPhases(state)
+    }
   } else if (command.type === 'vote') {
     const pending = availableCommand(state); if (pending.type !== 'vote') throw new Error('A vote is not expected now.')
     const phase = currentPhase(state)
@@ -837,4 +1056,8 @@ export function killPlayerForTest(input: GameState, targetId: string, cause = 't
 
 export function resolveMorningForTest(input: GameState): GameState {
   const state = clone(input); resolveMorningHiddenState(state); return state
+}
+
+export function evaluateVictoryForTest(input: GameState): GameState {
+  const state = clone(input); evaluateVictory(state); return state
 }

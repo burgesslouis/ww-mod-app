@@ -90,6 +90,8 @@ test('moderator text states the burn, night outcome and winners', async ({ page 
   await page.getByRole('button', { name: /record vote/i }).click()
   await expect(page.getByRole('heading', { name: 'The village has decided to burn Wolf.' })).toBeVisible()
   await page.getByRole('button', { name: /continue to night/i }).click()
+  await expect(page.getByRole('heading', { name: 'Call Alpha Wolf' })).toBeVisible()
+  await page.getByRole('button', { name: /continue night order/i }).click()
   await expect(page.getByRole('heading', { name: 'No night attack was made.' })).toBeVisible()
   await page.getByRole('button', { name: /^continue$/i }).click()
   await expect(page.getByRole('heading', { name: 'Village victory' })).toBeVisible()

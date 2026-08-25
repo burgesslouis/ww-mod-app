@@ -23,13 +23,73 @@ export const ROLE = {
   romeo: 'wherewolf.base.status.romeo',
 } as const
 
+export const DARKEST_ROLE = {
+  outcastWolf: 'wherewolf.darkest-night.role.outcast-wolf',
+  loneWolf: 'wherewolf.darkest-night.role.lone-wolf',
+  shapeshifter: 'wherewolf.darkest-night.role.shapeshifter',
+  poacher: 'wherewolf.darkest-night.role.poacher',
+  hag: 'wherewolf.darkest-night.role.hag',
+  vampire: 'wherewolf.darkest-night.role.vampire',
+  minion: 'wherewolf.darkest-night.role.minion',
+  nosferatu: 'wherewolf.darkest-night.role.nosferatu',
+  thrall: 'wherewolf.darkest-night.role.thrall',
+  igor: 'wherewolf.darkest-night.role.igor',
+  vampireHunter: 'wherewolf.darkest-night.role.vampire-hunter',
+  necromancer: 'wherewolf.darkest-night.role.necromancer',
+  undertaker: 'wherewolf.darkest-night.role.undertaker',
+  possessed: 'wherewolf.darkest-night.role.possessed',
+  vagrant: 'wherewolf.darkest-night.role.vagrant',
+  lyncher: 'wherewolf.darkest-night.role.lyncher',
+  sensitive: 'wherewolf.darkest-night.role.sensitive',
+  pestilent: 'wherewolf.darkest-night.role.pestilent',
+  gunsmith: 'wherewolf.darkest-night.role.gunsmith',
+  amnesiac: 'wherewolf.darkest-night.role.amnesiac',
+} as const
+
+export const HIDDEN_ROLE = {
+  inquisitor: 'wherewolf.hidden-motives.role.inquisitor',
+  templar: 'wherewolf.hidden-motives.role.templar',
+  executioner: 'wherewolf.hidden-motives.role.executioner',
+  assassin: 'wherewolf.hidden-motives.role.assassin',
+  guildMaster: 'wherewolf.hidden-motives.role.guild-master',
+  spy: 'wherewolf.hidden-motives.role.spy',
+  thief: 'wherewolf.hidden-motives.role.thief',
+  corruptGuard: 'wherewolf.hidden-motives.role.corrupt-guard',
+  guard: 'wherewolf.hidden-motives.role.guard',
+  lawyer: 'wherewolf.hidden-motives.role.lawyer',
+  mayor: 'wherewolf.hidden-motives.role.mayor',
+  merchant: 'wherewolf.hidden-motives.role.merchant',
+  preacher: 'wherewolf.hidden-motives.role.preacher',
+  leprechaun: 'wherewolf.hidden-motives.role.leprechaun',
+  sidhe: 'wherewolf.hidden-motives.role.sidhe',
+  goblin: 'wherewolf.hidden-motives.role.goblin',
+  ghost: 'wherewolf.hidden-motives.spirit.ghost',
+  presence: 'wherewolf.hidden-motives.spirit.presence',
+  spectre: 'wherewolf.hidden-motives.spirit.spectre',
+} as const
+
 export const PACK_ID = 'wherewolf.base.pack.roles'
+export const DARKEST_PACK_ID = 'wherewolf.darkest-night.pack.roles'
+export const HIDDEN_PACK_ID = 'wherewolf.hidden-motives.pack.roles'
 export const SCENARIO_ID = 'wherewolf.base.scenario.game'
+export const OFFICIAL_SCENARIO_ID = 'wherewolf.official.scenario.game'
 export const FACTION = {
   village: 'wherewolf.base.faction.village',
   wolves: 'wherewolf.base.faction.wolves',
   neutral: 'wherewolf.base.faction.neutral',
   lovers: 'wherewolf.base.faction.lovers',
+  loneWolf: 'wherewolf.darkest-night.faction.lone-wolf',
+  vampire: 'wherewolf.darkest-night.faction.vampire',
+  nosferatu: 'wherewolf.darkest-night.faction.nosferatu',
+  necromancer: 'wherewolf.darkest-night.faction.necromancer',
+  possessed: 'wherewolf.darkest-night.faction.possessed',
+  inquisition: 'wherewolf.hidden-motives.faction.inquisition',
+  criminals: 'wherewolf.hidden-motives.faction.criminals',
+  city: 'wherewolf.hidden-motives.faction.city',
+  anyHuman: 'wherewolf.core.faction.any-human',
+  anyShadow: 'wherewolf.core.faction.any-shadow',
+  spirit: 'wherewolf.hidden-motives.faction.spirit',
+  undeadSupport: 'wherewolf.darkest-night.faction.undead-support',
 } as const
 
 export const TRAIT = {
@@ -46,4 +106,20 @@ export const TRAIT = {
   defector: 'wherewolf.base.trait.defector',
   farmer: 'wherewolf.base.trait.farmer',
   healer: 'wherewolf.base.trait.healer',
+  shadow: 'wherewolf.core.trait.shadow',
+  undead: 'wherewolf.core.trait.undead',
+  guard: 'wherewolf.hidden-motives.trait.guard',
+  littleFolk: 'wherewolf.hidden-motives.trait.little-folk',
+  spirit: 'wherewolf.hidden-motives.trait.spirit',
+  ballotVoter: 'wherewolf.hidden-motives.trait.ballot-voter',
+  anyHumanWinner: 'wherewolf.core.trait.any-human-winner',
+  anyShadowWinner: 'wherewolf.core.trait.any-shadow-winner',
+  undeadSupport: 'wherewolf.darkest-night.trait.undead-support',
+  amnesiac: 'wherewolf.darkest-night.trait.amnesiac',
+  gunsmith: 'wherewolf.darkest-night.trait.gunsmith',
+  pestilent: 'wherewolf.darkest-night.trait.pestilent',
+  possessed: 'wherewolf.darkest-night.trait.possessed',
+  undeadHunter: 'wherewolf.darkest-night.trait.undead-hunter',
+  infectionImmune: 'wherewolf.darkest-night.trait.infection-immune',
+  infected: 'wherewolf.darkest-night.trait.infected',
 } as const

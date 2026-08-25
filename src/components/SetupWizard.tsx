@@ -24,16 +24,17 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const [error, setError] = useState<string>('')
 
   const selectedPacks = useMemo(() => packs.filter((pack) => packIds.includes(pack.id)), [packs, packIds])
-  const availableRoles = useMemo(() => {
+  const selectedRoles = useMemo(() => {
     const selectedIds = new Set(selectedPacks.flatMap((pack) => pack.roleIds))
-    return roles.filter((role) => selectedIds.has(role.id) && !role.categories.includes('Status'))
+    return roles.filter((role) => selectedIds.has(role.id))
   }, [roles, selectedPacks])
+  const availableRoles = useMemo(() => selectedRoles.filter((role) => !role.categories.includes('Status')), [selectedRoles])
   const activeRoles = availableRoles.filter((role) => roleConfig[role.id]?.possible)
   const exactDeck = activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, () => role.id))
   const publicRoles: PublicRoleRange[] = activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max }))
   const setup: GameSetup = {
     scenarioId, packIds, players, publicRoles, exactDeck, assignment, manualAssignments: assignment === 'manual' ? manual : undefined,
-    nightOrder, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: availableRoles },
+    nightOrder, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
   const validation = validateSetup(setup)
 

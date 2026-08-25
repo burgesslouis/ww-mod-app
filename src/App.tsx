@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BookOpen, ChevronLeft, Home as HomeIcon, Moon, Plus } from 'lucide-react'
 import { BASE_PACK, BASE_ROLES, BASE_SCENARIO } from './data/base'
+import { DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK, OFFICIAL_SCENARIO } from './data/expansions'
 import type { GameSession, PackDefinition, RoleDefinition, ScenarioDefinition, TraitDefinition } from './domain/types'
 import { applyToSession, createSession, currentState, redo, undo } from './engine/engine'
 import { listArtifacts, saveSession, seedBuiltIns } from './storage/db'
@@ -26,14 +27,14 @@ export default function App() {
 
   const roles = useMemo(() => {
     const all = artifacts.filter((artifact) => !artifact.meta.unavailableReasons?.length).flatMap((artifact): RoleDefinition[] => 'faction' in artifact ? [artifact] : 'roles' in artifact ? artifact.roles : artifact.packs.flatMap((pack) => pack.roles))
-    return [...new Map([...BASE_ROLES, ...all].map((role) => [role.id, role])).values()]
+    return [...new Map([...BASE_ROLES, ...DARKEST_NIGHT_PACK.roles, ...HIDDEN_MOTIVES_PACK.roles, ...all].map((role) => [role.id, role])).values()]
   }, [artifacts])
   const packs = useMemo(() => {
     const available = artifacts.filter((item) => !item.meta.unavailableReasons?.length)
     const embedded = available.filter((item): item is ScenarioDefinition => 'packs' in item).flatMap((scenario) => scenario.packs)
-    return [...new Map([BASE_PACK, ...available.filter((item): item is PackDefinition => 'roles' in item), ...embedded].map((pack) => [pack.id, pack])).values()]
+    return [...new Map([BASE_PACK, DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK, ...available.filter((item): item is PackDefinition => 'roles' in item), ...embedded].map((pack) => [pack.id, pack])).values()]
   }, [artifacts])
-  const scenarios = useMemo(() => [...new Map([BASE_SCENARIO, ...artifacts.filter((item): item is ScenarioDefinition => 'packs' in item && !item.meta.unavailableReasons?.length)].map((scenario) => [scenario.id, scenario])).values()], [artifacts])
+  const scenarios = useMemo(() => [...new Map([OFFICIAL_SCENARIO, BASE_SCENARIO, ...artifacts.filter((item): item is ScenarioDefinition => 'packs' in item && !item.meta.unavailableReasons?.length)].map((scenario) => [scenario.id, scenario])).values()], [artifacts])
   const traits = useMemo(() => {
     const catalogue = new Map<string, TraitDefinition>()
     roles.flatMap((role) => role.traitDefinitions ?? []).forEach((trait) => catalogue.set(trait.id, trait))

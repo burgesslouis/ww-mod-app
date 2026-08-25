@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import { BASE_PACK, BASE_SCENARIO } from '../data/base'
+import { DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK, OFFICIAL_SCENARIO } from '../data/expansions'
 import type { GameSession, PackDefinition, RoleDefinition, ScenarioDefinition } from '../domain/types'
 
 type Artifact = RoleDefinition | PackDefinition | ScenarioDefinition
@@ -32,7 +33,7 @@ function getDatabase() {
 export async function seedBuiltIns(): Promise<void> {
   const db = await getDatabase()
   const tx = db.transaction('artifacts', 'readwrite')
-  await Promise.all([tx.store.put(BASE_PACK), tx.store.put(BASE_SCENARIO), tx.done])
+  await Promise.all([tx.store.put(BASE_PACK), tx.store.put(BASE_SCENARIO), tx.store.put(DARKEST_NIGHT_PACK), tx.store.put(HIDDEN_MOTIVES_PACK), tx.store.put(OFFICIAL_SCENARIO), tx.done])
 }
 
 export async function listArtifacts(): Promise<Artifact[]> { return (await getDatabase()).getAll('artifacts') }

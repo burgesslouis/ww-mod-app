@@ -1,5 +1,5 @@
 import { withChecksum } from '../domain/artifacts'
-import { FACTION, PACK_ID, ROLE, SCENARIO_ID, TRAIT } from '../domain/ids'
+import { FACTION, HIDDEN_PACK_ID, PACK_ID, ROLE, SCENARIO_ID, TRAIT } from '../domain/ids'
 import type { AbilityDefinition, PackDefinition, RoleDefinition, ScenarioDefinition, StateVariable, TraitDefinition } from '../domain/types'
 
 const UUIDS: Record<string, string> = {
@@ -30,6 +30,7 @@ export const BASE_TRAITS: TraitDefinition[] = [
   { id: TRAIT.defector, label: 'Defector', colour: '#8f765f', description: 'Can awaken to the Wolf Pack.', builtIn: true },
   { id: TRAIT.farmer, label: 'Farmer', colour: '#78a257', description: 'Uses a Farmer latent variant.', builtIn: true },
   { id: TRAIT.healer, label: 'Healer', colour: '#58a486', description: 'Can perform revival actions.', builtIn: true },
+  { id: TRAIT.shadow, label: 'Shadow', colour: '#5f566f', description: 'Must be eliminated before a Human victory can finish.', builtIn: true },
   { id: 'wherewolf.base.trait.lover', label: 'Lover', colour: '#c86c8c', description: 'Shares the Lovers relationship and victory.', builtIn: true },
 ]
 
@@ -63,11 +64,11 @@ const wolfBite: AbilityDefinition = {
 }
 
 const roles: RoleDefinition[] = [
-  role(ROLE.alphaWolf, 'Alpha Wolf', FACTION.wolves, ['Wolf Pack', 'Attack'], [TRAIT.werewolf, TRAIT.wolfAttacker, TRAIT.corrupt],
+  role(ROLE.alphaWolf, 'Alpha Wolf', FACTION.wolves, ['Wolf Pack', 'Attack'], [TRAIT.werewolf, TRAIT.wolfAttacker, TRAIT.corrupt, TRAIT.shadow],
     'Leads the Wolf Pack and orders the bite.', 'On setup, learn the Pack and Defector. From the first night, choose the Pack’s bite target.', [wolfIntro, { ...wolfBite, order: 50 }]),
-  role(ROLE.packWolf, 'Pack Wolf', FACTION.wolves, ['Wolf Pack', 'Attack'], [TRAIT.werewolf, TRAIT.wolfAttacker, TRAIT.corrupt],
+  role(ROLE.packWolf, 'Pack Wolf', FACTION.wolves, ['Wolf Pack', 'Attack'], [TRAIT.werewolf, TRAIT.wolfAttacker, TRAIT.corrupt, TRAIT.shadow],
     'Supports the strongest living Werewolf.', 'On setup, learn the Pack and Defector. If no stronger attacker remains, choose the Pack’s bite target.', [wolfIntro, { ...wolfBite, order: 51 }]),
-  role(ROLE.wolfPup, 'Wolf Pup', FACTION.wolves, ['Wolf Pack', 'Transformation'], [TRAIT.werewolf, TRAIT.wolfPup, TRAIT.corrupt],
+  role(ROLE.wolfPup, 'Wolf Pup', FACTION.wolves, ['Wolf Pack', 'Transformation'], [TRAIT.werewolf, TRAIT.wolfPup, TRAIT.corrupt, TRAIT.shadow],
     'Strengthens the Pack when burned and grows if left alone.', 'Cannot bite. If burned, the Pack receives two attacks on the next night. If the only surviving Werewolf, skips one attack and becomes a Pack Wolf.', [
       wolfIntro,
       { id: `${ROLE.wolfPup}.burned`, name: 'Vengeful litter', kind: 'passive', trigger: 'burn.resolved', condition: { op: 'targetIsSelf' }, effects: [{ type: 'addStatus', targets: { kind: 'faction', faction: FACTION.wolves, life: 'alive' }, status: { id: 'wherewolf.base.status.double-bite', name: 'Double bite', data: { maxTargets: 2 } }, duration: 'night' }] },
@@ -85,11 +86,12 @@ const roles: RoleDefinition[] = [
   role(ROLE.wizard, 'Wizard', FACTION.village, ['Information', 'Night'], [TRAIT.mystic],
     'Checks whether one player is Mystic.', 'Each night, select one living player and privately learn whether they have the Mystic trait.', [
       { id: `${ROLE.wizard}.check`, name: 'Read mysticism', kind: 'active', trigger: 'night.action', order: 20, target: { label: 'Player to test', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' } }, effects: [{ type: 'inspectTrait', targets: { kind: 'chosen' }, trait: TRAIT.mystic, positive: 'MYSTIC', negative: 'NOT MYSTIC' }], instructions: 'Choose one living player to test for mysticism.', requires: ['private-information'], dependencyBarrier: 'information' },
-      { id: `${ROLE.wizard}.setup-check`, name: 'First-night mysticism read', kind: 'active', trigger: 'setup.action', order: 20, target: { label: 'Player to test', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' } }, effects: [{ type: 'inspectTrait', targets: { kind: 'chosen' }, trait: TRAIT.mystic, positive: 'MYSTIC', negative: 'NOT MYSTIC' }], instructions: 'Choose one living player to test for mysticism on the first night.', requires: ['private-information'], dependencyBarrier: 'information' },
+      { id: `${ROLE.wizard}.setup-check`, name: 'First-night mysticism read', kind: 'active', trigger: 'setup.action', order: 20, target: { label: 'Player to test', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' } }, effects: [{ type: 'inspectTrait', targets: { kind: 'chosen' }, trait: TRAIT.mystic, positive: 'MYSTIC', negative: 'NOT MYSTIC' }, { type: 'conditional', condition: { op: 'packSelected', packId: HIDDEN_PACK_ID }, effects: [{ type: 'learnPresence', targets: { kind: 'faction', faction: FACTION.inquisition, life: 'any' }, label: 'Inquisition' }] }], instructions: 'Choose one living player to test for mysticism on the first night. If Hidden Motives is attached, also tell the Wizard whether Inquisition is in play.', requires: ['private-information'], dependencyBarrier: 'information' },
     ]),
   role(ROLE.medium, 'Medium', FACTION.village, ['Information', 'Night'], [TRAIT.mystic],
     'Checks a dead player for corruption.', 'From the first repeating night, select one dead player and learn whether they were Corrupt.', [
-      { id: `${ROLE.medium}.check`, name: 'Commune with the dead', kind: 'active', trigger: 'night.action', order: 30, activeFromNight: 1, target: { label: 'Dead player', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'dead' } }, effects: [{ type: 'inspectTrait', targets: { kind: 'chosen' }, trait: TRAIT.corrupt, positive: 'CORRUPT', negative: 'NOT CORRUPT' }], instructions: 'Choose a dead player to test for corruption.', requires: ['private-information'], dependencyBarrier: 'information' },
+      { id: `${ROLE.medium}.check`, name: 'Commune with the dead', kind: 'active', trigger: 'night.action', order: 30, activeFromNight: 1, target: { label: 'Dead player', min: 0, max: 1, selector: { kind: 'allPlayers', life: 'dead' }, allowNone: true }, effects: [{ type: 'inspectTrait', targets: { kind: 'chosen' }, trait: TRAIT.corrupt, positive: 'CORRUPT', negative: 'NOT CORRUPT' }], instructions: 'Choose a dead player to test for corruption, or continue if no dead player can be checked.', requires: ['private-information'], dependencyBarrier: 'information' },
+      { id: `${ROLE.medium}.spirit-check`, name: 'Check for a Spirit', kind: 'active', trigger: 'night.action', order: 31, activeFromNight: 2, condition: { op: 'packSelected', packId: HIDDEN_PACK_ID }, target: { label: 'Dead player', min: 0, max: 1, selector: { kind: 'allPlayers', life: 'dead' }, allowNone: true }, effects: [{ type: 'conditional', condition: { op: 'hasStatus', subject: 'target', status: 'wherewolf.hidden-motives.status.known-spirit' }, effects: [{ type: 'removeStatus', targets: { kind: 'chosen' }, status: 'wherewolf.hidden-motives.status.spirit' }, { type: 'removeStatus', targets: { kind: 'chosen' }, status: 'wherewolf.hidden-motives.status.known-spirit' }, { type: 'announce', message: 'The known Spirit is removed from play.', visibility: 'moderator', category: 'Private result' }], otherwise: [{ type: 'inspectStatus', targets: { kind: 'chosen' }, status: 'wherewolf.hidden-motives.status.spirit', negative: 'NOT A SPIRIT' }, { type: 'conditional', condition: { op: 'hasStatus', subject: 'target', status: 'wherewolf.hidden-motives.status.spirit' }, effects: [{ type: 'addStatus', targets: { kind: 'chosen' }, status: { id: 'wherewolf.hidden-motives.status.known-spirit', name: 'Known Spirit' }, duration: 'permanent' }] }] }], instructions: 'Choose a dead player. Reveal whether they are a Spirit and which Spirit role they have. Choosing a Spirit already identified by the Medium removes that Spirit from play.', requires: ['private-information'], dependencyBarrier: 'information' },
     ]),
   role(ROLE.witch, 'Witch', FACTION.village, ['Protection', 'Night'], [TRAIT.mystic],
     'Protects another player from shadow attacks.', 'Each repeating night, choose one other living player. Shadow attacks attempted against them that night are prevented before redirection can trigger.', [
@@ -176,8 +178,8 @@ export const BASE_SCENARIO: ScenarioDefinition = Object.freeze(withChecksum<Scen
   meta: { kind: 'scenario', namespace: 'wherewolf.base', uuid: '20000000-0000-4000-8000-000000000001', name: 'Base Game', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
   description: 'The open-ended Base Game: setup night, aggregate voting, Ballot, night actions, morning victory, then announcements.',
   factions: [
-    { id: FACTION.village, name: 'Village', colour: '#d8c594' }, { id: FACTION.wolves, name: 'Wolf Pack', colour: '#b64d46' },
-    { id: FACTION.neutral, name: 'Neutral', colour: '#938f84' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c' },
+    { id: FACTION.village, name: 'Village', colour: '#d8c594', alignment: 'human' }, { id: FACTION.wolves, name: 'Wolf Pack', colour: '#b64d46', alignment: 'shadow' },
+    { id: FACTION.neutral, name: 'Neutral', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
   ],
   capabilities: ['private-information', 'public-role-ranges', 'hidden-setup-state', 'shadow-attacks', 'revival', 'aggregate-voting', 'announcements', 'relationships', 'personal-victory'],
   defaultPackIds: [PACK_ID], packs: [BASE_PACK], roleOverrides: {},
