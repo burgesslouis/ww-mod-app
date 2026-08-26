@@ -168,6 +168,13 @@ export interface TraitDefinition {
   builtIn?: boolean
 }
 
+export interface FactionDefinition {
+  id: string
+  name: string
+  colour: string
+  alignment?: 'human' | 'shadow' | 'neutral'
+}
+
 export interface AbilityDefinition {
   id: string
   name: string
@@ -208,6 +215,8 @@ export interface PackDefinition {
   description: string
   roleIds: string[]
   roles: RoleDefinition[]
+  factions?: FactionDefinition[]
+  traitDefinitions?: TraitDefinition[]
 }
 
 export type PhaseDefinition =
@@ -230,7 +239,7 @@ export interface ScenarioDefinition {
   id: string
   meta: ArtifactMeta
   description: string
-  factions: Array<{ id: string; name: string; colour: string; alignment?: 'human' | 'shadow' | 'neutral' }>
+  factions: FactionDefinition[]
   capabilities: string[]
   defaultPackIds: string[]
   packs: PackDefinition[]
@@ -377,6 +386,7 @@ export interface GameSession {
 }
 
 export interface ApplyResult { state: GameState; events: GameEvent[]; trace: TraceEntry[] }
+export interface EffectiveProperty { id: string; label: string; kind: 'alignment' | 'faction' | 'trait' | 'status' | 'transformation' | 'state'; colour?: string }
 export interface ImportPreview {
   artifact: RoleDefinition | PackDefinition | ScenarioDefinition
   status: 'new' | 'identical' | 'fork' | 'unsupported'

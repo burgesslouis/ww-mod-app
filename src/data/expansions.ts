@@ -180,13 +180,24 @@ export const HIDDEN_MOTIVES_ROLES: RoleDefinition[] = [
 export const DARKEST_NIGHT_PACK: PackDefinition = withChecksum({
   id: DARKEST_PACK_ID,
   meta: { kind: 'pack', namespace: 'wherewolf.darkest-night', uuid: '40000000-0000-4000-8000-000000000001', name: 'Darkest Night', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
-  description: 'The official Darkest Night expansion. Minion and Thrall are created roles and are not dealt.', roleIds: DARKEST_NIGHT_ROLES.map((entry) => entry.id), roles: DARKEST_NIGHT_ROLES,
+  description: 'The official Darkest Night expansion. Minion and Thrall are created roles and are not dealt.', roleIds: DARKEST_NIGHT_ROLES.map((entry) => entry.id), roles: DARKEST_NIGHT_ROLES, traitDefinitions: TRAITS,
+  factions: [
+    { id: FACTION.loneWolf, name: 'Lone Wolf', colour: '#984a49', alignment: 'shadow' }, { id: FACTION.vampire, name: 'Vampire', colour: '#772f49', alignment: 'shadow' },
+    { id: FACTION.nosferatu, name: 'Nosferatu', colour: '#5f405e', alignment: 'shadow' }, { id: FACTION.necromancer, name: 'Necromancer', colour: '#66507a', alignment: 'shadow' },
+    { id: FACTION.possessed, name: 'Possessed', colour: '#73576c', alignment: 'shadow' }, { id: FACTION.undeadSupport, name: 'Undead support', colour: '#766783', alignment: 'shadow' },
+    { id: FACTION.anyHuman, name: 'Any Human', colour: '#759175', alignment: 'human' }, { id: FACTION.anyShadow, name: 'Any Shadow', colour: '#77566d', alignment: 'shadow' },
+  ],
 })
 
 export const HIDDEN_MOTIVES_PACK: PackDefinition = withChecksum({
   id: HIDDEN_PACK_ID,
   meta: { kind: 'pack', namespace: 'wherewolf.hidden-motives', uuid: '40000000-0000-4000-8000-000000000002', name: 'Hidden Motives', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
-  description: 'The official Hidden Motives expansion. Ghost, Presence, and Spectre are moderator-assigned Spirits and are not dealt.', roleIds: HIDDEN_MOTIVES_ROLES.map((entry) => entry.id), roles: HIDDEN_MOTIVES_ROLES,
+  description: 'The official Hidden Motives expansion. Ghost, Presence, and Spectre are moderator-assigned Spirits and are not dealt.', roleIds: HIDDEN_MOTIVES_ROLES.map((entry) => entry.id), roles: HIDDEN_MOTIVES_ROLES, traitDefinitions: TRAITS,
+  factions: [
+    { id: FACTION.inquisition, name: 'Inquisition', colour: '#b48a4c', alignment: 'human' }, { id: FACTION.criminals, name: 'Criminals', colour: '#706b66', alignment: 'human' },
+    { id: FACTION.city, name: 'City', colour: '#537e8d', alignment: 'human' }, { id: FACTION.spirit, name: 'Spirit', colour: '#8d83ae', alignment: 'neutral' },
+    { id: FACTION.anyHuman, name: 'Any Human', colour: '#759175', alignment: 'human' }, { id: FACTION.anyShadow, name: 'Any Shadow', colour: '#77566d', alignment: 'shadow' },
+  ],
 })
 
 const allRoles = [...BASE_PACK.roles, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]
@@ -200,16 +211,7 @@ export const OFFICIAL_SCENARIO: ScenarioDefinition = withChecksum({
   id: OFFICIAL_SCENARIO_ID,
   meta: { kind: 'scenario', namespace: 'wherewolf.official', uuid: '50000000-0000-4000-8000-000000000001', name: 'Official Game', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
   description: 'Base Game with optional Darkest Night and Hidden Motives packs.',
-  factions: [
-    { id: FACTION.village, name: 'Village', colour: '#d8c594', alignment: 'human' }, { id: FACTION.wolves, name: 'Wolf Pack', colour: '#b64d46', alignment: 'shadow' },
-    { id: FACTION.loneWolf, name: 'Lone Wolf', colour: '#984a49', alignment: 'shadow' }, { id: FACTION.vampire, name: 'Vampire', colour: '#772f49', alignment: 'shadow' },
-    { id: FACTION.nosferatu, name: 'Nosferatu', colour: '#5f405e', alignment: 'shadow' }, { id: FACTION.necromancer, name: 'Necromancer', colour: '#66507a', alignment: 'shadow' },
-    { id: FACTION.possessed, name: 'Possessed', colour: '#73576c', alignment: 'shadow' }, { id: FACTION.inquisition, name: 'Inquisition', colour: '#b48a4c', alignment: 'human' },
-    { id: FACTION.criminals, name: 'Criminals', colour: '#706b66', alignment: 'human' }, { id: FACTION.city, name: 'City', colour: '#537e8d', alignment: 'human' },
-    { id: FACTION.neutral, name: 'Neutral', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
-    { id: FACTION.anyHuman, name: 'Any Human', colour: '#759175', alignment: 'human' }, { id: FACTION.anyShadow, name: 'Any Shadow', colour: '#77566d', alignment: 'shadow' },
-    { id: FACTION.undeadSupport, name: 'Undead support', colour: '#766783', alignment: 'shadow' }, { id: FACTION.spirit, name: 'Spirit', colour: '#8d83ae', alignment: 'neutral' },
-  ],
+  factions: [],
   capabilities: ['private-information', 'public-role-ranges', 'hidden-setup-state', 'shadow-attacks', 'revival', 'aggregate-voting', 'announcements', 'relationships', 'personal-victory', 'transformations', 'spirits', 'crusades'],
   defaultPackIds: [PACK_ID], packs: [BASE_PACK, DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK], roleOverrides: {},
   setupPipeline: [{ id: 'official.setup.actions', type: 'role-actions', label: 'First night', trigger: 'setup.action', abilityIds: setupIds }, { id: 'official.setup.complete', type: 'cycle-end', label: 'Finish setup' }],

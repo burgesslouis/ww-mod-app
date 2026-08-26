@@ -3,7 +3,7 @@ import { BASE_PACK } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { DARKEST_PACK_ID, DARKEST_ROLE as D, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
 import type { GameSetup } from '../domain/types'
-import { applyCommand, availableCommand, createInitialState, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest, resolveAttackForTest } from '../engine/engine'
+import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest, resolveAttackForTest } from '../engine/engine'
 
 const allRoles = [...BASE_PACK.roles, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]
 
@@ -89,5 +89,43 @@ describe('Official expansion defaults', () => {
     const goblin = HIDDEN_MOTIVES_ROLES.find((role) => role.id === H.goblin)!
     expect(goblin.traits).toContain(TRAIT.anyShadowWinner)
     expect(goblin.faction).not.toBe('wherewolf.base.faction.wolves')
+  })
+
+  it('derives current moderator-facing properties from canonical state', () => {
+    const state = createInitialState(officialSetup([ROLE.wizard, ROLE.alphaWolf, ROLE.farmer]))
+    state.players[0].statuses.push({ id: 'test-gun', name: 'Gun', duration: 'day', appliedCycle: 1 })
+    expect(effectiveProperties(state, 'p0').map((property) => property.label)).toEqual(expect.arrayContaining(['Human', 'Village', 'Mystic', 'Gun']))
+    state.players[0].factionOverride = 'wherewolf.base.faction.wolves'
+    state.players[0].statuses = []
+    const changed = effectiveProperties(state, 'p0').map((property) => property.label)
+    expect(changed).toEqual(expect.arrayContaining(['Shadow', 'Wolf Pack', 'Mystic']))
+    expect(changed).not.toContain('Human')
+    expect(changed).not.toContain('Gun')
+  })
+
+  it('makes expansion-only phases dormant with Base Roles alone', () => {
+    const setup = officialSetup([ROLE.alphaWolf, ROLE.farmer, ROLE.farmer])
+    setup.packIds = [BASE_PACK.id]
+    let state = createInitialState(setup)
+    const intro = availableCommand(state)
+    expect(intro).toMatchObject({ type: 'choose', abilityId: 'wherewolf.base.ability.wolf-intro' })
+    if (intro.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: intro.actorId, abilityId: intro.abilityId, targets: [] }).state
+    expect(availableCommand(state)).toMatchObject({ type: 'advance', title: 'Day 1 discussion' })
+    state = applyCommand(state, { type: 'advance' }).state
+    expect(availableCommand(state)).toMatchObject({ type: 'vote', title: 'First vote' })
+  })
+
+  it('does not call a pack-gated action when that pack is not attached', () => {
+    const setup = officialSetup([ROLE.medium, ROLE.farmer, ROLE.farmer])
+    setup.packIds = [BASE_PACK.id]
+    let state = createInitialState(setup)
+    state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const check = availableCommand(state)
+    expect(check).toMatchObject({ type: 'choose', abilityId: `${ROLE.medium}.check` })
+    if (check.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: check.actorId, abilityId: check.abilityId, targets: [] }).state
+    while (availableCommand(state).type === 'advance' && availableCommand(state).title === 'Result') state = applyCommand(state, { type: 'advance' }).state
+    expect(availableCommand(state)).not.toMatchObject({ abilityId: `${ROLE.medium}.spirit-check` })
   })
 })

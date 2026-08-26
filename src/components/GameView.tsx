@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronUp, Eye, History,
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { GameCommand, GameSession, RoleDefinition } from '../domain/types'
-import { availableCommand, currentState } from '../engine/engine'
+import { availableCommand, currentState, effectiveProperties, factionName } from '../engine/engine'
 
 interface Props {
   session: GameSession; roles: RoleDefinition[]; onChange: (session: GameSession) => void; onExit: () => void
@@ -29,7 +29,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
   const voteProgress = expected > 0 ? Math.min(100, (entered / expected) * 100) : entered === 0 ? 100 : 0
   const roleFor = (id: string) => state.rules.roles.find((role) => role.id === id) ?? roles.find((role) => role.id === id)
   const label = (id: string): string => state.players.find((player) => player.id === id)?.name ?? roleFor(id)?.meta.name ?? id.split('.').at(-1) ?? id
-  const factionLabel = (id: string): string => state.rules.scenario.factions.find((faction) => faction.id === id)?.name ?? id.split('.').at(-1) ?? id
+  const factionLabel = (id: string): string => factionName(state, id)
   const victoryMessage = [...state.events].reverse().find((event) => event.type === 'victory.check' && event.visibility === 'public')?.message.replace(/^Game over\.\s*/, '')
   const formatList = (items: string[]): string => items.length < 2 ? items[0] ?? '' : items.length === 2 ? `${items[0]} and ${items[1]}` : `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`
 
@@ -50,7 +50,13 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
     <div className="game-layout">
       <aside className={`secret-roster ${showRoster ? 'open' : ''}`}>
         <header><div><span className="eyebrow">CURRENT GAME</span><h2>Player roster</h2></div><button className="icon-button mobile-only" onClick={() => setShowRoster(false)}><X /></button></header>
-        <div className="roster-list">{state.players.map((player) => <article key={player.id} className={!player.alive ? 'dead' : ''}><div className="avatar">{player.name.slice(0, 1).toUpperCase()}</div><div><strong>{player.name}</strong><span>{roleFor(player.roleId)?.meta.name ?? player.roleId}</span>{Object.keys(player.roleState).length > 0 && <small>{Object.entries(player.roleState).map(([key, value]) => `${key}: ${String(value)}`).join(' · ')}</small>}</div>{!player.alive && <Skull />}</article>)}</div>
+        <div className="roster-list">{state.players.map((player) => {
+          const properties = effectiveProperties(state, player.id)
+          return <article key={player.id} className={!player.alive ? 'dead' : ''}>
+            <div className="roster-identity"><div className="avatar">{player.name.slice(0, 1).toUpperCase()}</div><div><strong>{player.name}</strong><span>{roleFor(player.roleId)?.meta.name ?? player.roleId}</span></div>{!player.alive && <Skull />}</div>
+            <details className="current-properties"><summary>Current properties <ChevronDown /></summary><div>{properties.map((property) => <span className={`property-chip ${property.kind}`} style={property.colour ? { borderColor: property.colour } : undefined} key={property.id}>{property.label}</span>)}</div></details>
+          </article>
+        })}</div>
         <button className="secondary full" onClick={() => setShowPublic(true)}><Eye /> Read-aloud role list</button>
       </aside>
 

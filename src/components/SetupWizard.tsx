@@ -80,8 +80,8 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
 
     <section className="setup-card">
       {step === 0 && <>
-        <div className="section-title"><div><span className="section-number">01</span><div><h2>Choose the rules</h2><p>Choose the scenario and the role packs you want to use.</p></div></div></div>
-        <label className="field"><span>Scenario</span><select value={scenarioId} onChange={(event) => { const next = scenarios.find((item) => item.id === event.target.value)!; setScenarioId(next.id); setPackIds(next.defaultPackIds); setNightOrder(next.nightOrder) }}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.meta.name}</option>)}</select></label>
+        <div className="section-title"><div><span className="section-number">01</span><div><h2>Choose role packs</h2><p>The Official Game supports the Base Roles and both official expansions.</p></div></div></div>
+        {scenarios.length > 1 && <label className="field"><span>Scenario</span><select value={scenarioId} onChange={(event) => { const next = scenarios.find((item) => item.id === event.target.value)!; setScenarioId(next.id); setPackIds(next.defaultPackIds); setNightOrder(next.nightOrder) }}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.meta.name}</option>)}</select></label>}
         <div className="scenario-preview"><strong>{scenario.meta.name}</strong><p>{scenario.description}</p></div>
         <h3>Attached packs</h3><div className="choice-grid">{packs.map((pack) => <button key={pack.id} className={`choice-card ${packIds.includes(pack.id) ? 'selected' : ''}`} onClick={() => togglePack(pack.id)}><span className="check-box">{packIds.includes(pack.id) && <Check />}</span><div><strong>{pack.meta.name}</strong><p>{pack.roles.filter((role) => !role.categories.includes('Status')).length} dealt roles · {pack.meta.builtIn ? 'Built in' : 'Custom'}</p></div></button>)}</div>
       </>}

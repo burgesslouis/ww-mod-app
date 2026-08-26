@@ -1,8 +1,9 @@
 import { BASE_ROLES, BASE_SCENARIO, roleName } from '../data/base'
+import { DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { FACTION, TRAIT } from '../domain/ids'
 import type {
   AbilityDefinition, ApplyResult, Condition, Effect, GameCommand, GameEvent, GameSession, GameSetup,
-  GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
+  EffectiveProperty, FactionDefinition, GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
   TraceEntry, ValidationIssue, ValidationResult, VoteState,
 } from '../domain/types'
 
@@ -26,7 +27,9 @@ function shuffle<T>(items: T[], random: GameState['random']): T[] {
 }
 
 function rulesFor(setup: GameSetup): { scenario: ScenarioDefinition; roles: RoleDefinition[] } {
-  return setup.rules ? clone(setup.rules) : { scenario: clone(BASE_SCENARIO), roles: clone(BASE_ROLES) }
+  if (setup.rules) return clone(setup.rules)
+  if (setup.scenarioId === OFFICIAL_SCENARIO.id) return { scenario: clone(OFFICIAL_SCENARIO), roles: clone([...BASE_ROLES, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]) }
+  return { scenario: clone(BASE_SCENARIO), roles: clone(BASE_ROLES) }
 }
 
 function roleMap(state: GameState): Map<string, RoleDefinition> {
@@ -34,6 +37,12 @@ function roleMap(state: GameState): Map<string, RoleDefinition> {
 }
 
 function roleOf(state: GameState, player: PlayerState): RoleDefinition | undefined { return roleMap(state).get(player.roleId) }
+function factionDefinitions(state: GameState): FactionDefinition[] {
+  const selectedPacks = state.rules.scenario.packs.filter((pack) => state.packIds.includes(pack.id))
+  return [...new Map([...state.rules.scenario.factions, ...selectedPacks.flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction])).values()]
+}
+function factionDefinition(state: GameState, id: string): FactionDefinition | undefined { return factionDefinitions(state).find((faction) => faction.id === id) }
+export function factionName(state: GameState, id: string): string { return factionDefinition(state, id)?.name ?? id.split('.').at(-1) ?? id }
 function factionOf(state: GameState, player: PlayerState): string { return player.factionOverride ?? roleOf(state, player)?.faction ?? 'unknown' }
 function statusIsActive(state: GameState, status: PlayerState['statuses'][number]): boolean {
   if (status.data?.sourceMustLive && status.sourcePlayerId && !state.players.find((player) => player.id === status.sourcePlayerId)?.alive) return false
@@ -48,6 +57,25 @@ function traitsOf(state: GameState, player: PlayerState): Set<string> {
 function hasTrait(state: GameState, playerId: string | undefined, trait: string): boolean {
   const player = state.players.find((item) => item.id === playerId)
   return player ? traitsOf(state, player).has(trait) : false
+}
+
+export function effectiveProperties(state: GameState, playerId: string): EffectiveProperty[] {
+  const player = state.players.find((entry) => entry.id === playerId)
+  if (!player) return []
+  const role = roleOf(state, player), faction = factionDefinition(state, factionOf(state, player))
+  const traits = new Map(state.rules.scenario.packs.filter((pack) => state.packIds.includes(pack.id)).flatMap((pack) => pack.traitDefinitions ?? []).map((trait) => [trait.id, trait]))
+  state.rules.roles.flatMap((definition) => definition.traitDefinitions ?? []).forEach((trait) => { if (!traits.has(trait.id)) traits.set(trait.id, trait) })
+  const properties: EffectiveProperty[] = []
+  if (faction?.alignment) properties.push({ id: `alignment:${faction.alignment}`, label: faction.alignment[0].toUpperCase() + faction.alignment.slice(1), kind: 'alignment', colour: faction.alignment === 'human' ? '#7f9d7b' : faction.alignment === 'shadow' ? '#8a5b70' : '#938f84' })
+  properties.push({ id: `faction:${factionOf(state, player)}`, label: faction?.name ?? factionOf(state, player).split('.').at(-1) ?? factionOf(state, player), kind: 'faction', colour: faction?.colour })
+  traitsOf(state, player).forEach((id) => { const trait = traits.get(id); properties.push({ id: `trait:${id}`, label: trait?.label ?? id.split('.').at(-1)?.replace(/-/g, ' ') ?? id, kind: 'trait', colour: trait?.colour }) })
+  activeStatuses(state, player).forEach((status) => properties.push({ id: `status:${status.id}`, label: status.name, kind: 'status' }))
+  if (player.initialRoleId !== player.roleId) properties.push({ id: 'transformation:role', label: `Transformed from ${state.rules.roles.find((definition) => definition.id === player.initialRoleId)?.meta.name ?? player.initialRoleId}`, kind: 'transformation' })
+  role?.state.forEach((definition) => {
+    const value = player.roleState[definition.key]
+    if (value !== null && value !== undefined && value !== false && value !== '') properties.push({ id: `state:${definition.key}`, label: `${definition.label}: ${String(value).replace(/_/g, ' ')}`, kind: 'state' })
+  })
+  return [...new Map(properties.map((property) => [property.id, property])).values()]
 }
 
 function currentPhase(state: GameState) {
@@ -278,6 +306,18 @@ function conditionMatches(state: GameState, condition: Condition | undefined, co
     return compare(select(state, condition.selector, context).length, condition.compare, value)
   }
   return false
+}
+
+// Public night calls may depend on public configuration, but never on whether a role was dealt.
+// Unknown player-dependent predicates remain eligible so the call cannot leak hidden state.
+function publiclyEnabled(state: GameState, condition: Condition | undefined): boolean {
+  if (!condition || condition.op === 'always') return true
+  if (condition.op === 'packSelected') return state.packIds.includes(condition.packId)
+  if (condition.op === 'cycle') return compare(state.cycle, condition.compare, condition.value)
+  if (condition.op === 'all') return condition.conditions.every((child) => publiclyEnabled(state, child))
+  if (condition.op === 'any') return condition.conditions.some((child) => publiclyEnabled(state, child))
+  if (condition.op === 'not' && ['packSelected', 'cycle', 'all', 'any', 'not'].includes(condition.condition.op)) return !publiclyEnabled(state, condition.condition)
+  return true
 }
 
 function constantValue(state: GameState, ownerId: string | undefined, key: string): unknown {
@@ -554,7 +594,7 @@ function scheduledActions(state: GameState): ScheduledAction[] {
     return role ? role.abilities.filter((ability) => ability.trigger === phase.trigger).map((ability) => ({ role, ability })) : []
   }).filter(({ ability }) => {
     const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
-    return barrierMatches && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id))
+    return barrierMatches && publiclyEnabled(state, ability.condition) && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id))
   })
   const possible = new Map<string, { role: RoleDefinition; ability: AbilityDefinition }>()
   possibleAbilities.forEach((entry) => possible.set(entry.ability.simultaneous?.id ?? entry.ability.id, entry))
@@ -603,7 +643,7 @@ function expectedVotes(state: GameState, candidates: string[], ballot: boolean):
 
 export function availableCommand(state: GameState): PendingCommand {
   if (state.gameOver) {
-    const factionNames = state.winningFactions.map((id) => state.rules.scenario.factions.find((faction) => faction.id === id)?.name ?? id.split('.').at(-1)).filter(Boolean)
+    const factionNames = state.winningFactions.map((id) => factionDefinition(state, id)?.name ?? id.split('.').at(-1)).filter(Boolean)
     return { type: 'game-over', title: factionNames.length ? `${factionNames.join(' and ')} victory` : 'Game complete', winners: state.winners, factions: state.winningFactions }
   }
   const result = state.pendingAnnouncements.find((announcement) => announcement.visibility === 'moderator')
@@ -817,10 +857,10 @@ function evaluateVictory(state: GameState) {
   if (!terminal) return
   const victoryEvent = emit(state, 'victory.check', terminal.reason, 'moderator', { data: { winningFaction: terminal.faction } })
   state.relationships.filter((relationship) => relationship.type.endsWith('.guarded')).forEach((relationship) => dispatch(state, 'victory.check', { event: { ...victoryEvent, targetId: relationship.to }, chosen: [], prevented: false }))
-  const alignment = state.rules.scenario.factions.find((faction) => faction.id === terminal!.faction)?.alignment
+  const alignment = factionDefinition(state, terminal!.faction)?.alignment
   const littleFolkAlive = state.players.filter((player) => player.alive && hasTrait(state, player.id, TRAIT.littleFolk)).length
   const factionWinners = state.players.filter((player) => {
-    const playerAlignment = state.rules.scenario.factions.find((faction) => faction.id === factionOf(state, player))?.alignment
+    const playerAlignment = factionDefinition(state, factionOf(state, player))?.alignment
     if (factionOf(state, player) === terminal!.faction || (alignment === 'human' && playerAlignment === 'human')) return true
     if (alignment === 'human' && hasTrait(state, player.id, TRAIT.anyHumanWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
     if (alignment === 'shadow' && hasTrait(state, player.id, TRAIT.anyShadowWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2

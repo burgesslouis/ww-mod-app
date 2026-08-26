@@ -166,11 +166,15 @@ function withRoleConstants(base: RoleDefinition, constants: RoleDefinition['cons
 export const BASE_ROLES = roles.map((entry) => Object.freeze(entry))
 export const BASE_DEALT_ROLES = BASE_ROLES.filter((entry) => entry.id !== ROLE.romeo)
 
-export const BASE_PACK: PackDefinition = Object.freeze(withChecksum({
+export const BASE_PACK: PackDefinition = Object.freeze(withChecksum<PackDefinition>({
   id: PACK_ID,
   meta: { kind: 'pack', namespace: 'wherewolf.base', uuid: '10000000-0000-4000-8000-000000000001', name: 'Base Roles', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
   description: 'The 21 dealt roles from the original Wherewolf game, plus the Romeo status.',
-  roleIds: BASE_ROLES.map((entry) => entry.id), roles: BASE_ROLES,
+  roleIds: BASE_ROLES.map((entry) => entry.id), roles: BASE_ROLES, traitDefinitions: BASE_TRAITS,
+  factions: [
+    { id: FACTION.village, name: 'Village', colour: '#d8c594', alignment: 'human' }, { id: FACTION.wolves, name: 'Wolf Pack', colour: '#b64d46', alignment: 'shadow' },
+    { id: FACTION.neutral, name: 'Neutral', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
+  ],
 }))
 
 export const BASE_SCENARIO: ScenarioDefinition = Object.freeze(withChecksum<ScenarioDefinition>({
@@ -215,6 +219,8 @@ export const BASE_SCENARIO: ScenarioDefinition = Object.freeze(withChecksum<Scen
   ],
 }))
 
-export const BUILT_IN_ARTIFACTS = [BASE_PACK, BASE_SCENARIO]
+// The legacy Base scenario remains available for save migration and focused
+// engine tests, but the app exposes only the canonical Official Game scenario.
+export const BUILT_IN_ARTIFACTS = [BASE_PACK]
 export function roleById(id: string, extra: RoleDefinition[] = []): RoleDefinition | undefined { return [...BASE_ROLES, ...extra].find((entry) => entry.id === id) }
 export function roleName(id: string): string { return roleById(id)?.meta.name ?? id.split('.').at(-1) ?? id }
