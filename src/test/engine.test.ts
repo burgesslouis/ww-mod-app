@@ -63,6 +63,7 @@ describe('Setup validation and deterministic history', () => {
     const first = availableCommand(state)
     expect(first.type).toBe('choose')
     expect(first.type === 'choose' && first.abilityId).toBe(`${ROLE.clairvoyant}.setup-check`)
+    expect(first.type === 'choose' && first.instructions).toContain('Say “Clairvoyant, wake up and check a player for corruption.”')
   })
 
   it('wakes all Wolves together and shows the Pack and Defector once', () => {

@@ -558,6 +558,7 @@ function eligibleActions(state: GameState): Array<{ actor: PlayerState; ability:
   if (!phase || phase.type !== 'role-actions') return []
   const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
   return abilityOwners(state, phase.trigger).filter(({ owner, ability }) => {
+    if (ability.kind !== 'active' && ability.kind !== 'shared-faction') return false
     const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
     const canActWhileDead = hasTrait(state, owner.id, TRAIT.spirit)
     const suppressed = activeStatuses(state, owner).some((status) => status.data?.suppressTrigger === phase.trigger && status.appliedCycle === state.cycle)
@@ -584,14 +585,40 @@ type ScheduledAction = { actor?: PlayerState; ability: AbilityDefinition; role: 
 
 function callKey(state: GameState, ability: AbilityDefinition): string { return `${state.pipeline}:${state.cycle}:${state.phaseId}:call:${ability.simultaneous?.id ?? ability.id}` }
 
+function spokenAction(ability: AbilityDefinition): string {
+  const phrase = (ability.callout?.trim() || ability.name.trim()).replace(/[.!?]+$/, '')
+  const lower = phrase ? phrase[0].toLowerCase() + phrase.slice(1) : 'perform the role action'
+  return /^(ask|check|choose|commune|count|create|decide|give|interrupt|learn|meet|place|protect|raise|read|recruit|review|show|tell|wake)\b/i.test(phrase) ? lower : `perform ${lower}`
+}
+
+function readAloudCall(callName: string, ability: AbilityDefinition): string {
+  return `${callName}, wake up and ${spokenAction(ability)}.`
+}
+
+function moderatorInstructions(ability: AbilityDefinition): string {
+  const instructions = ability.instructions?.trim().replace(/^Wake\b[^.!?]*[.!?]\s*/i, '')
+  return instructions || `Have them ${spokenAction(ability)}.`
+}
+
 function scheduledActions(state: GameState): ScheduledAction[] {
   const phase = currentPhase(state)
   if (!phase || phase.type !== 'role-actions') return []
   const actual = activeActions(state)
+  const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
+  const sort = (items: ScheduledAction[]) => items.sort((left, right) => {
+    const a = order.indexOf(left.ability.id), b = order.indexOf(right.ability.id)
+    return (a < 0 ? 9999 : a) - (b < 0 ? 9999 : b) || (left.ability.order ?? 100) - (right.ability.order ?? 100) || left.ability.id.localeCompare(right.ability.id)
+  })
+  if (state.setup.silentNight && phase.trigger !== 'day.action') {
+    return sort(actual.flatMap((entry) => {
+      const sourceRole = state.rules.roles.find((role) => role.abilities.some((ability) => ability.id === entry.ability.id)) ?? roleOf(state, entry.actor)
+      return sourceRole ? [{ ...entry, role: sourceRole, callOnly: false, key: actionKey(state, entry.actor.id, entry.ability.id) }] : []
+    }))
+  }
   const used = new Set<string>()
   const possibleAbilities = (phase.trigger === 'day.action' ? [] : state.setup.publicRoles).flatMap((range) => {
     const role = state.rules.roles.find((entry) => entry.id === range.roleId)
-    return role ? role.abilities.filter((ability) => ability.trigger === phase.trigger).map((ability) => ({ role, ability })) : []
+    return role ? role.abilities.filter((ability) => ability.trigger === phase.trigger && (ability.kind === 'active' || ability.kind === 'shared-faction')).map((ability) => ({ role, ability })) : []
   }).filter(({ ability }) => {
     const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
     return barrierMatches && publiclyEnabled(state, ability.condition) && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id))
@@ -608,11 +635,7 @@ function scheduledActions(state: GameState): ScheduledAction[] {
     const sourceRole = state.rules.roles.find((role) => role.abilities.some((ability) => ability.id === entry.ability.id)) ?? roleOf(state, entry.actor)
     if (sourceRole) result.push({ ...entry, role: sourceRole, callOnly: false, key: actionKey(state, entry.actor.id, entry.ability.id) })
   })
-  const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
-  return result.sort((left, right) => {
-    const a = order.indexOf(left.ability.id), b = order.indexOf(right.ability.id)
-    return (a < 0 ? 9999 : a) - (b < 0 ? 9999 : b) || (left.ability.order ?? 100) - (right.ability.order ?? 100) || left.ability.id.localeCompare(right.ability.id)
-  })
+  return sort(result)
 }
 
 function nextScheduledAction(state: GameState): ScheduledAction | undefined { return scheduledActions(state).find((entry) => !state.completedActions.includes(entry.key)) }
@@ -667,7 +690,7 @@ export function availableCommand(state: GameState): PendingCommand {
     }
     if (next.callOnly) {
       const callName = next.ability.simultaneous?.label ?? next.role.meta.name
-      return { type: 'advance', title: `Call ${callName}`, description: `Say “${callName}, wake up.” Pause for the normal response. There is no action to record in the app, so continue when the call is complete.`, actionLabel: 'Continue night order' }
+      return { type: 'advance', title: `Call ${callName}`, description: `Say “${readAloudCall(callName, next.ability)}” Wait briefly, then continue.`, actionLabel: 'Continue night order' }
     }
     const actor = next.actor!
     const candidates = targetCandidates(state, actor, next.ability)
@@ -675,7 +698,8 @@ export function availableCommand(state: GameState): PendingCommand {
     const minimum = absentEffect?.type === 'learnRolesAbsent' ? (typeof absentEffect.minimum === 'object' ? Number(constantValue(state, actor.id, absentEffect.minimum.constant)) : absentEffect.minimum) : next.ability.target?.min ?? 0
     const maxFromStatus = actor.statuses.map((status) => Number(status.data?.maxTargets ?? 0)).reduce((a, b) => Math.max(a, b), 0)
     const maximum = absentEffect?.type === 'learnRolesAbsent' ? candidates.length : Math.max(next.ability.target?.max ?? minimum, maxFromStatus)
-    const participants = [...new Map(simultaneousActions(state, next.ability).map(({ actor }) => [actor.id, actor])).values()]
+    const simultaneous = [...new Map(simultaneousActions(state, next.ability).map(({ actor }) => [actor.id, actor])).values()]
+    const participants = simultaneous.length ? simultaneous : state.setup.silentNight ? [actor] : []
     const information = next.ability.effects.flatMap((effect) => {
       if (effect.type !== 'learnRoleIdentity') return []
       const definition = state.rules.roles.find((role) => role.id === effect.roleId)
@@ -683,7 +707,9 @@ export function availableCommand(state: GameState): PendingCommand {
       return [{ label: definition?.meta.name ?? effect.roleId.split('.').at(-1) ?? effect.roleId, value: matches.join(', ') || 'Not in play', status: matches.length ? 'in-play' as const : 'not-in-play' as const }]
     })
     const callName = next.ability.simultaneous?.label ?? next.role.meta.name
-    const instructions = `Say “${callName}, wake up.” ${next.ability.instructions ?? 'Resolve this role action.'}`
+    const instructions = state.setup.silentNight
+      ? `Wake ${formatList(participants.map((participant) => participant.name))}${participants.length > 1 ? ' together' : ''}. ${moderatorInstructions(next.ability)}`
+      : `Say “${readAloudCall(callName, next.ability)}” ${moderatorInstructions(next.ability)}`
     return { type: 'choose', actorId: actor.id, abilityId: next.ability.id, title: next.ability.simultaneous ? `${next.ability.simultaneous.label} · ${next.ability.name}` : `${actor.name} · ${next.ability.name}`, instructions, candidates, min: minimum, max: maximum, allowNone: next.ability.target?.allowNone ?? minimum === 0, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, information: information.length ? information : undefined }
   }
   if (phase.type === 'aggregate-vote') {

@@ -20,6 +20,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const [assignment, setAssignment] = useState<GameSetup['assignment']>('random')
   const [manual, setManual] = useState<Record<string, string>>({})
   const [nightOrder, setNightOrder] = useState<string[]>(scenario?.nightOrder ?? [])
+  const [silentNight, setSilentNight] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
   const [error, setError] = useState<string>('')
 
@@ -34,7 +35,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const publicRoles: PublicRoleRange[] = activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max }))
   const setup: GameSetup = {
     scenarioId, packIds, players, publicRoles, exactDeck, assignment, manualAssignments: assignment === 'manual' ? manual : undefined,
-    nightOrder, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
+    nightOrder, silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
   const validation = validateSetup(setup)
 
@@ -84,6 +85,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         {scenarios.length > 1 && <label className="field"><span>Scenario</span><select value={scenarioId} onChange={(event) => { const next = scenarios.find((item) => item.id === event.target.value)!; setScenarioId(next.id); setPackIds(next.defaultPackIds); setNightOrder(next.nightOrder) }}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.meta.name}</option>)}</select></label>}
         <div className="scenario-preview"><strong>{scenario.meta.name}</strong><p>{scenario.description}</p></div>
         <h3>Attached packs</h3><div className="choice-grid">{packs.map((pack) => <button key={pack.id} className={`choice-card ${packIds.includes(pack.id) ? 'selected' : ''}`} onClick={() => togglePack(pack.id)}><span className="check-box">{packIds.includes(pack.id) && <Check />}</span><div><strong>{pack.meta.name}</strong><p>{pack.roles.filter((role) => !role.categories.includes('Status')).length} dealt roles · {pack.meta.builtIn ? 'Built in' : 'Custom'}</p></div></button>)}</div>
+        <h3>Night calls</h3><button type="button" aria-pressed={silentNight} className={`choice-card night-mode ${silentNight ? 'selected' : ''}`} onClick={() => setSilentNight((value) => !value)}><span className="check-box">{silentNight && <Check />}</span><div><strong>Silent night</strong><p>Skip spoken role call-outs. Only show the moderator the players who actually need to wake.</p></div></button>
       </>}
 
       {step === 1 && <>
@@ -110,7 +112,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         <div className="section-title"><div><span className="section-number">04</span><div><h2>Deal and review</h2><p>Choose how roles are assigned, then review the night order.</p></div></div></div>
         <div className="segmented">{(['random', 'locked-random', 'manual'] as const).map((mode) => <button key={mode} className={assignment === mode ? 'active' : ''} onClick={() => setAssignment(mode)}>{mode === 'random' ? <><Shuffle /> Fully random</> : mode === 'locked-random' ? <><Shuffle /> Lock some</> : <><GripVertical /> Manual</>}</button>)}</div>
         {assignment !== 'random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={assignment === 'manual' ? manual[item.id] ?? '' : item.lockedRoleId ?? ''} onChange={(event) => assignment === 'manual' ? setManual((current) => ({ ...current, [item.id]: event.target.value })) : updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">{assignment === 'manual' ? 'Choose role…' : 'Shuffle this seat'}</option>{activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, (_, index) => <option key={`${role.id}-${index}`} value={role.id}>{role.meta.name}</option>))}</select></label>)}</div>}
-        <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>
+        <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div><div><dt>Night calls</dt><dd>{silentNight ? 'Silent' : 'Read aloud'}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>
           <div><h3>Night order</h3><p className="muted">Actions are shown to the moderator in this order.</p><div className="night-order">{nightOrder.map((ability, index) => <div key={ability}><span>{index + 1}</span><strong>{abilityName(ability)}</strong><button disabled={index === 0} onClick={() => moveNight(index, -1)}><ChevronUp /></button><button disabled={index === nightOrder.length - 1} onClick={() => moveNight(index, 1)}><ChevronDown /></button></div>)}</div></div>
         </div>
         {!validation.valid && <div className="validation-box">{validation.issues.map((item, index) => <p key={index}>{item.message}</p>)}</div>}

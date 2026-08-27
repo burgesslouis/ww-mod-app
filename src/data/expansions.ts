@@ -19,6 +19,41 @@ const TRAITS: TraitDefinition[] = [
 const ids: string[] = [...Object.values(D), ...Object.values(H)]
 const uuid = (id: string) => `30000000-0000-4000-8000-${String(ids.indexOf(id) + 1).padStart(12, '0')}`
 
+const CALLOUTS: Record<string, string> = {
+  'wherewolf.darkest-night.ability.wolf-intro': 'meet the Pack',
+  'wherewolf.base.ability.wolf-bite': 'choose a player to bite',
+  [`${D.loneWolf}.bite`]: 'choose a player to bite',
+  [`${D.shapeshifter}.turn`]: 'decide whether to turn into a Werewolf',
+  [`${D.poacher}.information`]: 'learn the Werewolf count and whether the Lone Wolf is present',
+  [`${D.hag}.shadow-intro`]: 'meet the other Shadow players',
+  [`${D.vampire}.intro`]: 'meet Igor and the Hag',
+  [`${D.vampire}.bite`]: 'choose a player to bite',
+  [`${D.nosferatu}.intro`]: 'meet Igor and the Hag',
+  [`${D.nosferatu}.raise`]: 'decide whether to raise a Thrall',
+  [`${D.igor}.vampire`]: 'learn whether the Vampire is present',
+  [`${D.igor}.nosferatu`]: 'learn whether Nosferatu is present',
+  [`${D.vampireHunter}.check`]: 'learn whether Vampire and Nosferatu are present',
+  [`${D.necromancer}.curse`]: 'choose two players to Curse',
+  [`${D.necromancer}.ritual`]: 'check the ritual',
+  [`${D.undertaker}.check`]: 'learn whether the Necromancer is present',
+  [`${D.possessed}.successor`]: 'choose a successor',
+  [`${D.lyncher}.target`]: 'choose a player to be your mark',
+  [`${D.sensitive}.check`]: 'check whether a player belongs to the Village',
+  [`${D.gunsmith}.give`]: 'choose a player to receive a Gun',
+  [`${D.amnesiac}.remember`]: 'choose your remembered role',
+  'wherewolf.hidden-motives.ability.little-folk-intro': 'meet the other Little Folk',
+  [`${H.inquisitor}.intro`]: 'meet the Inquisition and learn the Mystic count',
+  [`${H.assassin}.intro`]: 'meet the other Criminals',
+  [`${H.assassin}.kill`]: 'decide whether to use your assassination',
+  [`${H.guildMaster}.intro`]: 'meet the other Criminals',
+  [`${H.guildMaster}.recruit`]: 'decide whether to recruit a player',
+  [`${H.spy}.intro`]: 'meet the other Criminals',
+  [`${H.thief}.intro`]: 'meet the other Criminals',
+  [`${H.thief}.interrupt`]: 'decide whether to interrupt a role',
+  [`${H.corruptGuard}.intro`]: 'meet the Guards and Criminals',
+  [`${H.guard}.intro`]: 'meet the other Guards and learn the Criminal count',
+}
+
 function role(id: string, name: string, faction: string, categories: string[], traits: string[], summary: string, description: string, abilities: AbilityDefinition[] = [], state: StateVariable[] = [], maximumCopies = 1, statuses?: RoleDefinition['statuses']): RoleDefinition {
   const namespace = id.includes('.darkest-night.') ? 'wherewolf.darkest-night' : 'wherewolf.hidden-motives'
   return withChecksum({
@@ -31,10 +66,10 @@ function role(id: string, name: string, faction: string, categories: string[], t
 }
 
 const setup = (id: string, name: string, order: number, effects: AbilityDefinition['effects'], instructions: string, simultaneous?: AbilityDefinition['simultaneous']): AbilityDefinition => ({
-  id, name, kind: 'active', trigger: 'setup.action', order, effects, instructions, simultaneous, dependencyBarrier: 'setup-information', resultPresentation: simultaneous ? 'inline' : undefined,
+  id, name, kind: 'active', trigger: 'setup.action', order, effects, callout: CALLOUTS[id], instructions, simultaneous, dependencyBarrier: 'setup-information', resultPresentation: simultaneous ? 'inline' : undefined,
 })
 const night = (id: string, name: string, order: number, target: AbilityDefinition['target'], effects: AbilityDefinition['effects'], instructions: string, extra: Partial<AbilityDefinition> = {}): AbilityDefinition => ({
-  id, name, kind: 'active', trigger: 'night.action', order, target, effects, instructions, dependencyBarrier: 'before-attack-resolution', ...extra,
+  id, name, kind: 'active', trigger: 'night.action', order, target, effects, callout: CALLOUTS[id], instructions, dependencyBarrier: 'before-attack-resolution', ...extra,
 })
 const day = (id: string, name: string, order: number, target: AbilityDefinition['target'], effects: AbilityDefinition['effects'], instructions: string): AbilityDefinition => ({
   id, name, kind: 'active', trigger: 'day.action', order, target, effects, instructions,

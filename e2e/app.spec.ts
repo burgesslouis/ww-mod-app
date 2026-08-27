@@ -44,6 +44,8 @@ test('grouped setup actions wake matching roles together', async ({ page }, test
   test.skip(testInfo.project.name !== 'phone', 'Phone moderation layout')
   await page.goto('/')
   await page.getByRole('button', { name: /^new game$/i }).click()
+  await page.getByRole('button', { name: /silent night/i }).click()
+  await expect(page.getByRole('button', { name: /silent night/i })).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('button', { name: /continue/i }).click()
   await page.locator('.player-row .danger').last().click()
   await page.locator('.player-row .danger').last().click()
@@ -57,6 +59,8 @@ test('grouped setup actions wake matching roles together', async ({ page }, test
   await page.getByRole('button', { name: /continue/i }).click()
   await page.getByRole('button', { name: /deal roles & begin/i }).click()
   await expect(page.getByRole('heading', { name: 'Wolf Pack · Meet the Pack' })).toBeVisible()
+  await expect(page.locator('.phase-instruction')).toContainText(/Wake Player \d, Player \d, and Player \d together\./)
+  await expect(page.locator('.phase-instruction')).not.toContainText('Say “')
   await expect(page.locator('.wake-together')).toContainText('WAKE TOGETHER')
   await expect(page.locator('.wake-participants strong')).toHaveCount(3)
   await expect(page.locator('.action-information')).toContainText('Defector')
@@ -96,6 +100,7 @@ test('moderator text states the burn, night outcome and winners', async ({ page 
   await expect(page.getByRole('heading', { name: 'The village has decided to burn Wolf.' })).toBeVisible()
   await page.getByRole('button', { name: /continue to night/i }).click()
   await expect(page.getByRole('heading', { name: 'Call Alpha Wolf' })).toBeVisible()
+  await expect(page.locator('.phase-instruction')).toContainText('Alpha Wolf, wake up and choose a player to bite.')
   await page.getByRole('button', { name: /continue night order/i }).click()
   await expect(page.getByRole('heading', { name: 'No night attack was made.' })).toBeVisible()
   await page.getByRole('button', { name: /^continue$/i }).click()
@@ -159,6 +164,7 @@ test('desktop guided editor manages reusable traits and action timing', async ({
   await expect(page.getByText('Resolve with first-night information actions.')).toBeVisible()
   await expect(page.getByLabel('Action participants')).toHaveValue('together')
   await expect(page.getByLabel('Group label')).toHaveValue('Wolf Pack')
+  await expect(page.getByLabel('Spoken action')).toHaveValue('meet the Pack')
 })
 
 test('installed shell reloads while offline', async ({ page, context }) => {

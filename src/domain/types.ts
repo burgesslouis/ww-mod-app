@@ -187,6 +187,8 @@ export interface AbilityDefinition {
   condition?: Condition
   effects: Effect[]
   instructions?: string
+  /** Action phrase read after “wake up and”, for example “check a player for corruption”. */
+  callout?: string
   requires?: string[]
   dependencyBarrier?: string
   simultaneous?: { id: string; label: string }
@@ -263,6 +265,7 @@ export interface GameSetup {
   manualAssignments?: Record<string, string>
   hiddenState?: Record<string, Record<string, unknown>>
   nightOrder?: string[]
+  silentNight?: boolean
   seed: number
   rules?: { scenario: ScenarioDefinition; roles: RoleDefinition[] }
 }

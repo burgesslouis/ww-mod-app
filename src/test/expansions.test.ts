@@ -30,6 +30,12 @@ describe('Official expansion defaults', () => {
     expect(OFFICIAL_SCENARIO.packs.map((pack) => pack.id)).toEqual([BASE_PACK.id, DARKEST_PACK_ID, HIDDEN_PACK_ID])
   })
 
+  it('gives every built-in setup and night action an authored spoken phrase', () => {
+    const orderedActions = allRoles.flatMap((role) => role.abilities.filter((ability) => (ability.trigger === 'setup.action' || ability.trigger === 'night.action') && (ability.kind === 'active' || ability.kind === 'shared-faction')))
+    expect(orderedActions.length).toBeGreaterThan(0)
+    expect(orderedActions.filter((ability) => !ability.callout?.trim()).map((ability) => ability.id)).toEqual([])
+  })
+
   it('marks every Shadow Creature with the Shadow trait', () => {
     for (const id of [ROLE.alphaWolf, ROLE.packWolf, ROLE.wolfPup, D.outcastWolf, D.loneWolf, D.necromancer, D.nosferatu, D.vampire, D.possessed]) {
       expect(allRoles.find((role) => role.id === id)?.traits).toContain(TRAIT.shadow)
@@ -42,7 +48,19 @@ describe('Official expansion defaults', () => {
     state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
     const command = availableCommand(state)
     expect(command).toMatchObject({ type: 'advance', title: 'Call Vampire' })
-    expect(command.type === 'advance' && command.description).toContain('“Vampire, wake up.”')
+    expect(command.type === 'advance' && command.description).toContain('“Vampire, wake up and choose a player to bite.”')
+  })
+
+  it('in silent-night mode skips absent-role calls and names only actual players to wake', () => {
+    const setup = officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.witch], [ROLE.farmer, ROLE.alphaWolf, ROLE.witch, ROLE.clairvoyant, D.vampire])
+    setup.silentNight = true
+    const state = createInitialState(setup)
+    state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const command = availableCommand(state)
+    expect(command).toMatchObject({ type: 'choose', actorId: 'p2', abilityId: `${ROLE.witch}.protect`, participantIds: ['p2'] })
+    expect(command.type === 'choose' && command.instructions).toContain('Wake Player 3.')
+    expect(command.type === 'choose' && command.instructions).not.toContain('Say “')
+    expect(command.type === 'choose' && command.instructions).not.toContain('Clairvoyant')
   })
 
   it('lets the moderator decide whether to assign any Spirit after a death', () => {
