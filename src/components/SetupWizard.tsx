@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Eye, GripVertical, Minus, Plus, Shuffle, Users, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { GameSetup, PackDefinition, PlayerSetup, PublicRoleRange, RoleDefinition, ScenarioDefinition } from '../domain/types'
 import { roleName } from '../data/base'
 import { validateSetup } from '../engine/engine'
@@ -38,6 +38,8 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     nightOrder, silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
   const validation = validateSetup(setup)
+
+  useEffect(() => { window.scrollTo({ top: 0 }) }, [step])
 
   function togglePack(id: string) { setPackIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]) }
   function updatePlayer(id: string, patch: Partial<PlayerSetup>) { setPlayers((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item)) }
@@ -101,9 +103,9 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
           <div className="role-config-head"><span>Available role</span><span>Announced min</span><span>Announced max</span><span>In play</span></div>
           {availableRoles.map((role) => { const config = roleConfig[role.id] ?? defaultRoleConfig(role); return <div className={`role-config-row ${config.possible ? 'enabled' : ''}`} key={role.id}>
             <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{role.faction.split('.').at(-1)} · {role.categories.slice(0, 2).join(', ')}</small></div></label>
-            <Stepper value={config.min} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'min', value)} />
-            <Stepper value={config.max} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'max', value)} />
-            <ExactCount role={role} config={config} onChange={(value) => updateRole(role.id, 'exact', value)} />
+            <div className="role-config-control"><small>Announced min</small><Stepper value={config.min} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'min', value)} /></div>
+            <div className="role-config-control"><small>Announced max</small><Stepper value={config.max} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'max', value)} /></div>
+            <div className="role-config-control"><small>In play</small><ExactCount role={role} config={config} onChange={(value) => updateRole(role.id, 'exact', value)} /></div>
           </div> })}
         </div>
       </>}

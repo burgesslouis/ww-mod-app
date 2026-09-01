@@ -50,7 +50,7 @@ export default function App() {
   if (!ready) return <div className="boot"><img src={logoUrl} alt="" /><p>Lighting the lantern…</p></div>
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell app-screen-${screen}`}>
       <header className="topbar">
         <button className="brand" onClick={() => setScreen('home')} aria-label="Wherewolf home">
           <img src={logoUrl} alt="" /><span>WHEREWOLF</span><small>MODERATOR</small>
