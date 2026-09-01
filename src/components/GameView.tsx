@@ -1,12 +1,20 @@
 import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronUp, Eye, History, RotateCcw, RotateCw, Settings2, Skull, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { GameCommand, GameSession, RoleDefinition } from '../domain/types'
+import type { GameCommand, GameSession, PhaseDefinition, RoleDefinition, VoteState } from '../domain/types'
 import { availableCommand, currentState, effectiveProperties, factionName } from '../engine/engine'
 
 interface Props {
   session: GameSession; roles: RoleDefinition[]; onChange: (session: GameSession) => void; onExit: () => void
   onUndo: () => void; onRedo: () => void; onCommand: (command: GameCommand) => void
+}
+
+export function voteUiContext(phase: PhaseDefinition | undefined, latestVoteKind?: VoteState['kind']) {
+  const activeVoteKind = phase?.type === 'aggregate-vote' ? phase.vote : undefined
+  return {
+    activeVoteKind,
+    showLatestTally: Boolean(latestVoteKind && (activeVoteKind === 'ballot' || latestVoteKind === activeVoteKind)),
+  }
 }
 
 export default function GameView({ session, roles, onExit, onUndo, onRedo, onCommand }: Props) {
@@ -23,6 +31,8 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
   const commandKey = pending.type === 'choose' ? `choose:${pending.actorId}:${pending.abilityId}` : pending.type === 'vote' ? `vote:${state.phaseId}:${pending.candidates.join(',')}` : pending.type === 'advance' ? `advance:${state.phaseId}:${pending.title}` : `game-over:${pending.winners.join(',')}`
   useEffect(() => { setSelected([]); setError(''); setAcceptMismatch(false); setTotals(pending.type === 'vote' ? pending.existing : {}) }, [commandKey])
   const alive = state.players.filter((player) => player.alive)
+  const phases = state.pipeline === 'setup' ? state.rules.scenario.setupPipeline : state.rules.scenario.cyclePipeline
+  const { activeVoteKind, showLatestTally } = voteUiContext(phases[state.phaseIndex], state.votes?.kind)
   const currentTotals = pending.type === 'vote' ? Object.fromEntries(pending.candidates.map((id) => [id, Number(totals[id] ?? 0)])) : {}
   const entered = Object.values(currentTotals).reduce((sum, value) => sum + value, 0)
   const expected = pending.type === 'vote' ? pending.expected : 0
@@ -76,7 +86,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
           {pending.type === 'vote' && <>
             <p className="phase-instruction">Enter the votes received by each candidate. Role abilities are applied after the total is checked.</p>
             <div className={`vote-meter ${entered === expected ? 'valid' : entered > expected ? 'excess' : ''}`}><div><strong>{entered}</strong><span>entered</span></div><div className="vote-progress" role="progressbar" aria-label="Votes entered" aria-valuemin={0} aria-valuemax={expected} aria-valuenow={entered}><span style={{ width: `${voteProgress}%` }} /></div><div><strong>{expected}</strong><span>expected</span></div><small>{entered === expected ? 'All votes entered' : entered < expected ? `${expected - entered} remaining` : `${entered - expected} too many`}</small></div>
-            <div className="vote-list">{pending.candidates.map((id) => <div key={id}><div><strong>{label(id)}</strong>{state.ballot.includes(id) && <span className="tag">Ballot</span>}</div><div className="vote-stepper"><button onClick={() => setTotals((current) => ({ ...current, [id]: Math.max(0, (current[id] ?? 0) - 1) }))}>−</button><input aria-label={`${label(id)} votes`} inputMode="numeric" value={totals[id] ?? 0} onChange={(event) => setTotals((current) => ({ ...current, [id]: Math.max(0, Number(event.target.value) || 0) }))} /><button onClick={() => setTotals((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}>+</button></div></div>)}</div>
+            <div className="vote-list">{pending.candidates.map((id) => <div key={id}><div><strong>{label(id)}</strong>{activeVoteKind === 'ballot' && state.ballot.includes(id) && <span className="tag">Ballot</span>}</div><div className="vote-stepper"><button onClick={() => setTotals((current) => ({ ...current, [id]: Math.max(0, (current[id] ?? 0) - 1) }))}>−</button><input aria-label={`${label(id)} votes`} inputMode="numeric" value={totals[id] ?? 0} onChange={(event) => setTotals((current) => ({ ...current, [id]: Math.max(0, Number(event.target.value) || 0) }))} /><button onClick={() => setTotals((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}>+</button></div></div>)}</div>
             {entered !== expected && <label className="accept-warning"><input type="checkbox" checked={acceptMismatch} onChange={(event) => setAcceptMismatch(event.target.checked)} /><span className="check-box">{acceptMismatch && <Check />}</span><div><strong>Save this tally anyway</strong><small>The mismatch will be marked in the game history.</small></div></label>}
             <button className="primary command-button" onClick={submitVote}>Record vote <ArrowRight /></button>
           </>}
@@ -85,7 +95,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
           {error && <div className="error-banner"><AlertTriangle /> {error}</div>}
         </div>
 
-        {state.votes && <details className="tally-details"><summary>Latest tally: raw → effective <ChevronDown /></summary><div>{state.votes.candidates.map((id) => <p key={id}><span>{label(id)}</span><strong>{state.votes!.raw[id] ?? 0} → {state.votes!.effective[id] ?? 0}</strong></p>)}</div></details>}
+        {state.votes && showLatestTally && <details className="tally-details"><summary>Latest tally: raw → effective <ChevronDown /></summary><div>{state.votes.candidates.map((id) => <p key={id}><span>{label(id)}</span><strong>{state.votes!.raw[id] ?? 0} → {state.votes!.effective[id] ?? 0}</strong></p>)}</div></details>}
         <FarmerSetup state={state} onCommand={submit} roleFor={roleFor} />
       </section>
     </div>
