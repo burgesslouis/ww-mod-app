@@ -1,14 +1,19 @@
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Eye, GripVertical, Minus, Plus, Shuffle, Users, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Eye, Leaf, Minus, Plus, Shuffle, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { GameSetup, PackDefinition, PlayerSetup, PublicRoleRange, RoleDefinition, ScenarioDefinition } from '../domain/types'
-import { roleName } from '../data/base'
+import { PACK_ID } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
+import { capitaliseLabel } from '../ui/labels'
 
 interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
 
 const player = (index: number): PlayerSetup => ({ id: crypto.randomUUID(), name: '' })
 const defaultRoleConfig = (role: RoleDefinition, possible = false): RoleConfig => ({ possible, min: role.multiplicity.min, max: role.multiplicity.max, exact: role.multiplicity.min })
+const initialRoleConfig = (roles: RoleDefinition[], packs: PackDefinition[]): Record<string, RoleConfig> => {
+  const baseRoleIds = new Set(packs.find((pack) => pack.id === PACK_ID)?.roleIds ?? [])
+  return Object.fromEntries(roles.filter((role) => baseRoleIds.has(role.id) && !role.categories.includes('Status')).map((role) => [role.id, defaultRoleConfig(role, true)]))
+}
 
 export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart }: Props) {
   const [step, setStep] = useState(0)
@@ -16,9 +21,8 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const scenario = scenarios.find((item) => item.id === scenarioId) ?? scenarios[0]
   const [packIds, setPackIds] = useState<string[]>(scenario?.defaultPackIds ?? [])
   const [players, setPlayers] = useState<PlayerSetup[]>(Array.from({ length: 6 }, (_, index) => player(index)))
-  const [roleConfig, setRoleConfig] = useState<Record<string, RoleConfig>>({})
-  const [assignment, setAssignment] = useState<GameSetup['assignment']>('random')
-  const [manual, setManual] = useState<Record<string, string>>({})
+  const [roleConfig, setRoleConfig] = useState<Record<string, RoleConfig>>(() => initialRoleConfig(roles, packs))
+  const [assignment, setAssignment] = useState<'random' | 'locked-random'>('random')
   const [nightOrder, setNightOrder] = useState<string[]>(scenario?.nightOrder ?? [])
   const [silentNight, setSilentNight] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
@@ -29,13 +33,19 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     const selectedIds = new Set(selectedPacks.flatMap((pack) => pack.roleIds))
     return roles.filter((role) => selectedIds.has(role.id))
   }, [roles, selectedPacks])
+  const factionNames = useMemo(() => new Map([...scenario.factions, ...selectedPacks.flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction.name])), [scenario.factions, selectedPacks])
   const availableRoles = useMemo(() => selectedRoles.filter((role) => !role.categories.includes('Status')), [selectedRoles])
   const activeRoles = availableRoles.filter((role) => roleConfig[role.id]?.possible)
+  const nightOrderEntries = nightOrder.flatMap((abilityId) => {
+    const owners = activeRoles.filter((role) => role.abilities.some((ability) => ability.id === abilityId))
+    const ability = owners.flatMap((role) => role.abilities).find((candidate) => candidate.id === abilityId)
+    return ability && owners.length ? [{ id: abilityId, name: capitaliseLabel(ability.name), roles: owners.map((role) => role.meta.name) }] : []
+  })
   const exactDeck = activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, () => role.id))
   const publicRoles: PublicRoleRange[] = activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max }))
   const setup: GameSetup = {
-    scenarioId, packIds, players, publicRoles, exactDeck, assignment, manualAssignments: assignment === 'manual' ? manual : undefined,
-    nightOrder, silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
+    scenarioId, packIds, players, publicRoles, exactDeck, assignment,
+    nightOrder: nightOrderEntries.map((entry) => entry.id), silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
   const validation = validateSetup(setup)
 
@@ -60,10 +70,12 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
       return { ...current, [roleId]: next }
     })
   }
-  function moveNight(index: number, direction: -1 | 1) {
-    const next = [...nightOrder], destination = index + direction
-    if (destination < 0 || destination >= next.length) return
-    ;[next[index], next[destination]] = [next[destination], next[index]]; setNightOrder(next)
+  function moveNight(abilityId: string, direction: -1 | 1) {
+    const visibleIndex = nightOrderEntries.findIndex((entry) => entry.id === abilityId), destination = visibleIndex + direction
+    if (visibleIndex < 0 || destination < 0 || destination >= nightOrderEntries.length) return
+    const next = [...nightOrder], targetId = nightOrderEntries[destination].id
+    const sourceIndex = next.indexOf(abilityId), targetIndex = next.indexOf(targetId)
+    ;[next[sourceIndex], next[targetIndex]] = [next[targetIndex], next[sourceIndex]]; setNightOrder(next)
   }
   function nextStep() {
     if (step === 0 && !packIds.length) return setError('Attach at least one pack.')
@@ -74,8 +86,6 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     if (!validation.valid) return setError(validation.issues.filter((issue) => issue.severity === 'error').map((issue) => issue.message).join(' '))
     onStart(setup)
   }
-
-  const abilityName = (id: string) => availableRoles.flatMap((role) => role.abilities).find((ability) => ability.id === id)?.name ?? id.split('.').at(-1)
 
   return <div className="setup-page page-width">
     <div className="page-heading"><div><span className="eyebrow">NEW GAME</span><h1>Prepare the village</h1></div><button className="icon-button" onClick={onCancel}><X /> Cancel</button></div>
@@ -102,7 +112,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         <div className="role-config-table">
           <div className="role-config-head"><span>Available role</span><span>Announced min</span><span>Announced max</span><span>In play</span></div>
           {availableRoles.map((role) => { const config = roleConfig[role.id] ?? defaultRoleConfig(role); return <div className={`role-config-row ${config.possible ? 'enabled' : ''}`} key={role.id}>
-            <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{role.faction.split('.').at(-1)} · {role.categories.slice(0, 2).join(', ')}</small></div></label>
+            <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{factionNames.get(role.faction) ?? capitaliseLabel(role.faction.split('.').at(-1) ?? '')} · {role.categories.slice(0, 2).map(capitaliseLabel).join(', ')}</small></div></label>
             <div className="role-config-control"><small>Announced min</small><Stepper value={config.min} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'min', value)} /></div>
             <div className="role-config-control"><small>Announced max</small><Stepper value={config.max} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'max', value)} /></div>
             <div className="role-config-control"><small>In play</small><ExactCount role={role} config={config} onChange={(value) => updateRole(role.id, 'exact', value)} /></div>
@@ -112,10 +122,10 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
 
       {step === 3 && <>
         <div className="section-title"><div><span className="section-number">04</span><div><h2>Deal and review</h2><p>Choose how roles are assigned, then review the night order.</p></div></div></div>
-        <div className="segmented">{(['random', 'locked-random', 'manual'] as const).map((mode) => <button key={mode} className={assignment === mode ? 'active' : ''} onClick={() => setAssignment(mode)}>{mode === 'random' ? <><Shuffle /> Fully random</> : mode === 'locked-random' ? <><Shuffle /> Lock some</> : <><GripVertical /> Manual</>}</button>)}</div>
-        {assignment !== 'random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={assignment === 'manual' ? manual[item.id] ?? '' : item.lockedRoleId ?? ''} onChange={(event) => assignment === 'manual' ? setManual((current) => ({ ...current, [item.id]: event.target.value })) : updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">{assignment === 'manual' ? 'Choose role…' : 'Shuffle this seat'}</option>{activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, (_, index) => <option key={`${role.id}-${index}`} value={role.id}>{role.meta.name}</option>))}</select></label>)}</div>}
+        <div className="segmented"><button className={assignment === 'random' ? 'active' : ''} onClick={() => setAssignment('random')}><Shuffle /> Random allocation</button><button className={assignment === 'locked-random' ? 'active' : ''} onClick={() => setAssignment('locked-random')}><Leaf /> Gardened allocation</button></div>
+        {assignment === 'locked-random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={item.lockedRoleId ?? ''} onChange={(event) => updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">Shuffle this seat</option>{activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, (_, index) => <option key={`${role.id}-${index}`} value={role.id}>{role.meta.name}</option>))}</select></label>)}</div>}
         <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div><div><dt>Night calls</dt><dd>{silentNight ? 'Silent' : 'Read aloud'}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>
-          <div><h3>Night order</h3><p className="muted">Actions are shown to the moderator in this order.</p><div className="night-order">{nightOrder.map((ability, index) => <div key={ability}><span>{index + 1}</span><strong>{abilityName(ability)}</strong><button disabled={index === 0} onClick={() => moveNight(index, -1)}><ChevronUp /></button><button disabled={index === nightOrder.length - 1} onClick={() => moveNight(index, 1)}><ChevronDown /></button></div>)}</div></div>
+          <div><h3>Night order</h3><p className="muted">Actions for possible roles are shown in this order.</p><div className="night-order">{nightOrderEntries.map((entry, index) => <div key={entry.id}><span>{index + 1}</span><div className="night-action-label"><strong>{entry.name}</strong><div className="night-role-tags">{entry.roles.map((role) => <span key={role}>{role}</span>)}</div></div><button disabled={index === 0} onClick={() => moveNight(entry.id, -1)}><ChevronUp /></button><button disabled={index === nightOrderEntries.length - 1} onClick={() => moveNight(entry.id, 1)}><ChevronDown /></button></div>)}</div></div>
         </div>
         {!validation.valid && <div className="validation-box">{validation.issues.map((item, index) => <p key={index}>{item.message}</p>)}</div>}
       </>}
