@@ -694,7 +694,7 @@ export function availableCommand(state: GameState): PendingCommand {
   if (phase.type === 'role-actions') {
     const next = nextScheduledAction(state)
     if (!next) {
-      if (state.pipeline === 'setup') return { type: 'advance', title: 'First night complete', description: 'Ask everyone to wake up and begin the first day.', actionLabel: 'Begin Day 1' }
+      if (state.pipeline === 'setup') return { type: 'advance', title: 'N0 complete', description: 'Ask everyone to wake up and begin the first day.', actionLabel: 'Begin Day 1' }
       if (phase.dependencyBarrier === 'after-attack-resolution') return { type: 'advance', title: 'The night is complete', description: 'Continue to the morning result.', actionLabel: 'Continue to morning' }
       return { type: 'advance', title: 'All active roles may sleep', description: 'All scheduled actions have been recorded. Continue to the night’s outcome.', actionLabel: 'Continue' }
     }

@@ -43,7 +43,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
     submit({ type: 'vote', totals: currentTotals, acceptInvalid: entered !== expected && acceptMismatch })
   }
 
-  const phaseLabel = state.pipeline === 'setup' ? 'FIRST NIGHT' : state.phaseId.includes('day') ? `DAY ${state.cycle}` : state.phaseId.includes('morning') ? `MORNING ${state.cycle + 1}` : `NIGHT ${state.cycle}`
+  const phaseLabel = state.pipeline === 'setup' ? 'N0' : state.phaseId.includes('day') ? `DAY ${state.cycle}` : state.phaseId.includes('morning') ? `MORNING ${state.cycle + 1}` : `N${state.cycle}`
 
   return <div className="game-page">
     <div className="game-statusbar"><div><span className="pulse" /><strong>{phaseLabel}</strong><small>{state.rules.scenario.meta.name}</small></div><div><Users /> {alive.length} alive</div></div>

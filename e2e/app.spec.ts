@@ -27,7 +27,7 @@ test('phone-first setup remains usable on a narrow screen', async ({ page }, tes
   }
   await page.getByRole('button', { name: /continue/i }).click()
   await page.getByRole('button', { name: /deal roles & begin/i }).click()
-  await expect(page.locator('.game-statusbar')).toContainText('FIRST NIGHT')
+  await expect(page.locator('.game-statusbar')).toContainText('N0')
   await expect(page.locator('.phase-card')).toBeVisible()
   await page.getByRole('button', { name: /^roster$/i }).click()
   await expect(page.locator('.current-properties')).toHaveCount(6)
@@ -161,7 +161,7 @@ test('desktop guided editor manages reusable traits and action timing', async ({
   await expect(dropzone.getByText('Moon touched')).toBeVisible()
   await page.locator('.ability-card > header').first().click()
   await expect(page.getByLabel('Action timing')).toHaveValue('setup-information')
-  await expect(page.getByText('Resolve with first-night information actions.')).toBeVisible()
+  await expect(page.getByText('Resolve with N0 information actions.')).toBeVisible()
   await expect(page.getByLabel('Action participants')).toHaveValue('together')
   await expect(page.getByLabel('Group label')).toHaveValue('Wolf Pack')
   await expect(page.getByLabel('Spoken action')).toHaveValue('meet the Pack')

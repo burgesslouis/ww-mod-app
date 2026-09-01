@@ -21,8 +21,8 @@ const TEMPLATES: Array<{ name: string; effect: Effect; trigger: TriggerType }> =
 
 const ACTION_GROUPS = [
   { value: '', label: 'Default position', description: 'Use the normal position for this action.' },
-  { value: 'setup-information', label: 'First night · information', description: 'Resolve with first-night information actions.' },
-  { value: 'relationships', label: 'First night · relationships', description: 'Resolve with first-night relationship choices.' },
+  { value: 'setup-information', label: 'N0 · information', description: 'Resolve with N0 information actions.' },
+  { value: 'relationships', label: 'N0 · relationships', description: 'Resolve with N0 relationship choices.' },
   { value: 'information', label: 'Night · information', description: 'Resolve near the start of each night.' },
   { value: 'protection', label: 'Night · protection', description: 'Resolve before attacks are chosen.' },
   { value: 'after-protection', label: 'Night · attack selection', description: 'Resolve after protection choices and before attacks land.' },

@@ -58,7 +58,7 @@ describe('Setup validation and deterministic history', () => {
     expect(result.issues.some((entry) => entry.message.includes('Protection must exist'))).toBe(true)
   })
 
-  it('offers Clairvoyant and Wizard checks on the one-time first night', () => {
+  it('offers Clairvoyant and Wizard checks on N0', () => {
     const state = createInitialState(setupFor([ROLE.clairvoyant, ROLE.wizard, ROLE.alphaWolf]))
     const first = availableCommand(state)
     expect(first.type).toBe('choose')

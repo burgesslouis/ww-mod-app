@@ -51,7 +51,7 @@ describe('Official expansion defaults', () => {
     expect(command.type === 'advance' && command.description).toContain('“Vampire, wake up and choose a player to bite.”')
   })
 
-  it('gives Vampire its bite on Night 1, the first repeating night', () => {
+  it('gives Vampire its bite on N1', () => {
     const state = createInitialState(officialSetup([D.vampire, ROLE.farmer, ROLE.farmer]))
     state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
     expect(availableCommand(state)).toMatchObject({ type: 'choose', actorId: 'p0', abilityId: `${D.vampire}.bite` })
@@ -60,7 +60,7 @@ describe('Official expansion defaults', () => {
   it.each([
     [ROLE.bard, ROLE.farmer, 'Bard: A Non-Corrupt player was found by the Clairvoyant.'],
     [ROLE.innkeeper, ROLE.sinner, 'Innkeeper: A Corrupt player was found by the Clairvoyant.'],
-  ])('announces %s news after the first night', (newsgiver, targetRole, expectedNews) => {
+  ])('announces %s news after N0', (newsgiver, targetRole, expectedNews) => {
     let state = createInitialState(officialSetup([ROLE.clairvoyant, newsgiver, targetRole]))
     const check = availableCommand(state)
     expect(check).toMatchObject({ type: 'choose', abilityId: `${ROLE.clairvoyant}.setup-check` })
@@ -106,7 +106,7 @@ describe('Official expansion defaults', () => {
     expect(pending.type === 'choose' && pending.candidates).toEqual(expect.arrayContaining([ROLE.alphaWolf, ROLE.farmer, D.sensitive]))
   })
 
-  it('makes Hag Hex information negative rather than inverted, starting on the first night', () => {
+  it('makes Hag Hex information negative rather than inverted, starting on N0', () => {
     let state = createInitialState(officialSetup([ROLE.clairvoyant, D.hag, ROLE.farmer]))
     const setupCheck = availableCommand(state)
     expect(setupCheck).toMatchObject({ type: 'choose', abilityId: `${ROLE.clairvoyant}.setup-check` })
