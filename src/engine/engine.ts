@@ -297,6 +297,7 @@ function conditionMatches(state: GameState, condition: Condition | undefined, co
     return Boolean(definition?.traits.includes(condition.trait))
   }
   if (condition.op === 'packSelected') return state.packIds.includes(condition.packId)
+  if (condition.op === 'publicRolePossible') return state.setup.publicRoles.some((role) => role.roleId === condition.roleId && role.max > 0)
   if (condition.op === 'cycle') return compare(state.cycle, condition.compare, condition.value)
   if (condition.op === 'state') return compare(state.players.find((player) => player.id === context.ownerId)?.roleState[condition.key], condition.compare, condition.value)
   if (condition.op === 'fact') return compare(state.facts[condition.key], condition.compare, condition.value)
@@ -313,6 +314,7 @@ function conditionMatches(state: GameState, condition: Condition | undefined, co
 function publiclyEnabled(state: GameState, condition: Condition | undefined): boolean {
   if (!condition || condition.op === 'always') return true
   if (condition.op === 'packSelected') return state.packIds.includes(condition.packId)
+  if (condition.op === 'publicRolePossible') return state.setup.publicRoles.some((role) => role.roleId === condition.roleId && role.max > 0)
   if (condition.op === 'cycle') return compare(state.cycle, condition.compare, condition.value)
   if (condition.op === 'all') return condition.conditions.every((child) => publiclyEnabled(state, child))
   if (condition.op === 'any') return condition.conditions.some((child) => publiclyEnabled(state, child))
@@ -375,8 +377,10 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     case 'inspectTrait': {
       targets.forEach((id) => {
         const littleFolkImmune = hasTrait(state, context.ownerId, TRAIT.mystic) && hasTrait(state, id, TRAIT.littleFolk)
-        const inverted = Boolean(context.ownerId && activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!).some((status) => status.data?.invertInformation))
-        const result = inverted ? !hasTrait(state, id, effect.trait) : hasTrait(state, id, effect.trait)
+        const informationStatuses = context.ownerId ? activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!) : []
+        const forcedNegative = informationStatuses.some((status) => status.data?.forceNegativeInformation)
+        const inverted = informationStatuses.some((status) => status.data?.invertInformation)
+        const result = forcedNegative ? false : inverted ? !hasTrait(state, id, effect.trait) : hasTrait(state, id, effect.trait)
         state.pendingAnnouncements.push({ message: littleFolkImmune ? `${playerLabel(state, id)}: NO RESULT` : `${playerLabel(state, id)}: ${result ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' })
         if (effect.rememberAs) state.facts[effect.rememberAs] = result
       }); return `inspected ${targets.map((id) => playerLabel(state, id)).join(', ')}`
@@ -384,9 +388,12 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     case 'inspectFaction': {
       targets.forEach((id) => {
         const littleFolkImmune = hasTrait(state, context.ownerId, TRAIT.mystic) && hasTrait(state, id, TRAIT.littleFolk)
-        const inverted = Boolean(context.ownerId && activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!).some((status) => status.data?.invertInformation))
+        const informationStatuses = context.ownerId ? activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!) : []
+        const forcedNegative = informationStatuses.some((status) => status.data?.forceNegativeInformation)
+        const inverted = informationStatuses.some((status) => status.data?.invertInformation)
         const matches = factionOf(state, state.players.find((item) => item.id === id)!) === effect.faction
-        state.pendingAnnouncements.push({ message: littleFolkImmune ? `${playerLabel(state, id)}: NO RESULT` : `${playerLabel(state, id)}: ${(inverted ? !matches : matches) ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' })
+        const result = forcedNegative ? false : inverted ? !matches : matches
+        state.pendingAnnouncements.push({ message: littleFolkImmune ? `${playerLabel(state, id)}: NO RESULT` : `${playerLabel(state, id)}: ${result ? effect.positive : effect.negative}`, category: 'Private result', visibility: 'moderator' })
       })
       return 'faction information recorded'
     }
@@ -394,7 +401,8 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
       targets.forEach((id) => {
         const player = state.players.find((item) => item.id === id)
         const status = player ? activeStatuses(state, player).find((entry) => entry.id === effect.status) : undefined
-        state.pendingAnnouncements.push({ message: `${playerLabel(state, id)}: ${status?.name ?? effect.negative}`, category: 'Private result', visibility: 'moderator' })
+        const forcedNegative = Boolean(context.ownerId && activeStatuses(state, state.players.find((entry) => entry.id === context.ownerId)!).some((entry) => entry.data?.forceNegativeInformation))
+        state.pendingAnnouncements.push({ message: `${playerLabel(state, id)}: ${status && !forcedNegative ? effect.positive ?? status.name : effect.negative}`, category: 'Private result', visibility: 'moderator' })
       })
       return 'status information recorded'
     }
@@ -434,6 +442,8 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
       return branch.map((child) => applyEffect(state, child, context)).join('; ') || 'condition had no effect'
     }
     case 'addStatus': {
+      const protectionBlocked = Boolean(context.ownerId && effect.status.traits?.includes('wherewolf.core.status.attack-protection') && activeStatuses(state, state.players.find((player) => player.id === context.ownerId)!).some((status) => status.data?.blockProtection))
+      if (protectionBlocked) return 'protection failed'
       targets.forEach((id) => {
         const player = state.players.find((item) => item.id === id); if (!player) return
         player.statuses = player.statuses.filter((status) => status.id !== effect.status.id)
@@ -902,18 +912,20 @@ function evaluateVictory(state: GameState) {
   emit(state, 'victory.check', `Game over. ${terminal.reason}`, 'public', { data: { winners: state.winners } })
 }
 
-function resolveAnnouncements(state: GameState) {
+function resolveAnnouncements(state: GameState, categories: string[]) {
   const eventStart = state.events.length
   const event = emit(state, 'morning.announcements', 'Preparing morning announcements.', 'moderator')
   dispatch(state, 'morning.announcements', { event, chosen: [], prevented: false })
   const nightDeaths = (state.facts.nightDeaths as string[] | undefined) ?? []
   const livingDeaths = nightDeaths.filter((id) => !state.players.find((player) => player.id === id)?.alive)
-  emit(state, 'morning.announcements', livingDeaths.length ? `Deaths: ${livingDeaths.map((id) => playerLabel(state, id)).join(', ')}.` : 'There were no deaths in the night.', 'public')
-  state.pendingAnnouncements.filter((announcement) => announcement.visibility === 'public').forEach((announcement) => emit(state, 'morning.announcements', announcement.message, 'public', { data: { category: announcement.category } }))
-  state.pendingAnnouncements = state.pendingAnnouncements.filter((announcement) => announcement.visibility !== 'public')
+  if (categories.includes('Deaths')) emit(state, 'morning.announcements', livingDeaths.length ? `Deaths: ${livingDeaths.map((id) => playerLabel(state, id)).join(', ')}.` : 'There were no deaths in the night.', 'public', { data: { category: 'Deaths' } })
+  const selected = state.pendingAnnouncements.filter((announcement) => announcement.visibility === 'public' && categories.includes(announcement.category))
+  selected.forEach((announcement) => emit(state, 'morning.announcements', announcement.message, 'public', { data: { category: announcement.category } }))
+  state.pendingAnnouncements = state.pendingAnnouncements.filter((announcement) => !selected.includes(announcement))
   state.facts.nightDeaths = []
+  delete state.facts['last-clairvoyant-corrupt']
   const announcements = state.events.slice(eventStart).filter((entry) => entry.type === 'morning.announcements' && entry.visibility === 'public').map((entry) => entry.message)
-  queueModeratorStep(state, 'Make the morning announcements.', announcements.join(' '), 'Begin the next day')
+  if (announcements.length) queueModeratorStep(state, state.pipeline === 'setup' ? 'Make the first morning announcement.' : 'Make the morning announcements.', announcements.join(' '), state.pipeline === 'setup' ? 'Begin Day 1' : 'Begin the next day')
 }
 
 function finishCycle(state: GameState) {
@@ -950,7 +962,7 @@ function settleAutomaticPhases(state: GameState) {
     if (phase.type === 'burn-resolution') { resolveBurn(state); advancePhase(state); continue }
     if (phase.type === 'attack-resolution') { resolveAttacks(state, true); advancePhase(state); continue }
     if (phase.type === 'victory-check') { evaluateVictory(state); if (!state.gameOver) advancePhase(state); continue }
-    if (phase.type === 'announcements') { resolveAnnouncements(state); advancePhase(state); continue }
+    if (phase.type === 'announcements') { resolveAnnouncements(state, phase.categories); advancePhase(state); continue }
     if (phase.type === 'cycle-end') { finishCycle(state); advancePhase(state); continue }
     return
   }

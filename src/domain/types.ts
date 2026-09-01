@@ -81,6 +81,7 @@ export type Condition =
   | { op: 'ownerInBallot'; value?: boolean }
   | { op: 'targetRoleHasTrait'; trait: string }
   | { op: 'packSelected'; packId: string }
+  | { op: 'publicRolePossible'; roleId: string }
   | { op: 'cycle'; compare: CompareOperator; value: number }
   | { op: 'state'; key: string; compare: CompareOperator; value: unknown }
   | { op: 'fact'; key: string; compare: CompareOperator; value: unknown }
@@ -117,7 +118,7 @@ export type NumericValue = number | { count: Selector; multiplier?: number; add?
 export type Effect =
   | { type: 'inspectTrait'; targets: Selector; trait: string; positive: string; negative: string; rememberAs?: string }
   | { type: 'inspectFaction'; targets: Selector; faction: string; positive: string; negative: string }
-  | { type: 'inspectStatus'; targets: Selector; status: string; negative: string }
+  | { type: 'inspectStatus'; targets: Selector; status: string; positive?: string; negative: string }
   | { type: 'learnRolesAbsent'; minimum: number | { constant: string } }
   | { type: 'learnRoleIdentity'; roleId: string }
   | { type: 'learnRolePresence'; roleId: string }

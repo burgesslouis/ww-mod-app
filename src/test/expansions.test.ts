@@ -45,10 +45,35 @@ describe('Official expansion defaults', () => {
 
   it('calls a publicly possible night role even when it was not dealt', () => {
     const state = createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.witch], [ROLE.farmer, ROLE.alphaWolf, ROLE.witch, D.vampire]))
-    state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
     const command = availableCommand(state)
     expect(command).toMatchObject({ type: 'advance', title: 'Call Vampire' })
     expect(command.type === 'advance' && command.description).toContain('“Vampire, wake up and choose a player to bite.”')
+  })
+
+  it('gives Vampire its bite on Night 1, the first repeating night', () => {
+    const state = createInitialState(officialSetup([D.vampire, ROLE.farmer, ROLE.farmer]))
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    expect(availableCommand(state)).toMatchObject({ type: 'choose', actorId: 'p0', abilityId: `${D.vampire}.bite` })
+  })
+
+  it.each([
+    [ROLE.bard, ROLE.farmer, 'Bard: A Non-Corrupt player was found by the Clairvoyant.'],
+    [ROLE.innkeeper, ROLE.sinner, 'Innkeeper: A Corrupt player was found by the Clairvoyant.'],
+  ])('announces %s news after the first night', (newsgiver, targetRole, expectedNews) => {
+    let state = createInitialState(officialSetup([ROLE.clairvoyant, newsgiver, targetRole]))
+    const check = availableCommand(state)
+    expect(check).toMatchObject({ type: 'choose', abilityId: `${ROLE.clairvoyant}.setup-check` })
+    if (check.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: check.actorId, abilityId: check.abilityId, targets: ['p2'] }).state
+    expect(availableCommand(state)).toMatchObject({ type: 'advance', title: 'Result' })
+    state = applyCommand(state, { type: 'advance' }).state
+    expect(availableCommand(state)).toMatchObject({
+      type: 'advance',
+      title: 'Make the first morning announcement.',
+      description: expectedNews,
+      actionLabel: 'Begin Day 1',
+    })
   })
 
   it('in silent-night mode skips absent-role calls and names only actual players to wake', () => {
@@ -75,10 +100,61 @@ describe('Official expansion defaults', () => {
 
   it('limits the second-night Amnesiac choice to publicly possible roles', () => {
     const state = createInitialState(officialSetup([D.amnesiac, ROLE.alphaWolf, ROLE.farmer], [D.amnesiac, ROLE.alphaWolf, ROLE.farmer, D.sensitive]))
-    state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
     const pending = availableCommand(state)
     expect(pending).toMatchObject({ type: 'choose', actorId: 'p0', abilityId: `${D.amnesiac}.remember` })
     expect(pending.type === 'choose' && pending.candidates).toEqual(expect.arrayContaining([ROLE.alphaWolf, ROLE.farmer, D.sensitive]))
+  })
+
+  it('makes Hag Hex information negative rather than inverted, starting on the first night', () => {
+    let state = createInitialState(officialSetup([ROLE.clairvoyant, D.hag, ROLE.farmer]))
+    const setupCheck = availableCommand(state)
+    expect(setupCheck).toMatchObject({ type: 'choose', abilityId: `${ROLE.clairvoyant}.setup-check` })
+    if (setupCheck.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: setupCheck.actorId, abilityId: setupCheck.abilityId, targets: ['p1'] }).state
+    expect(state.players[0].statuses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'wherewolf.darkest-night.status.hex', data: expect.objectContaining({ forceNegativeInformation: true }) }),
+    ]))
+    expect(state.pendingAnnouncements.map((announcement) => announcement.message)).toContain('Player 2: NOT CORRUPT')
+
+    state.pendingAnnouncements = []
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const laterCheck = availableCommand(state)
+    expect(laterCheck).toMatchObject({ type: 'choose', abilityId: `${ROLE.clairvoyant}.check` })
+    if (laterCheck.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: laterCheck.actorId, abilityId: laterCheck.abilityId, targets: ['p2'] }).state
+    expect(state.pendingAnnouncements.map((announcement) => announcement.message)).toContain('Player 3: NOT CORRUPT')
+    expect(state.pendingAnnouncements.map((announcement) => announcement.message)).not.toContain('Player 3: CORRUPT')
+  })
+
+  it('prevents a Hexed Witch from applying protection', () => {
+    let state = createInitialState(officialSetup([ROLE.witch, D.hag, ROLE.farmer]))
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const protect = availableCommand(state)
+    expect(protect).toMatchObject({ type: 'choose', abilityId: `${ROLE.witch}.protect` })
+    if (protect.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: protect.actorId, abilityId: protect.abilityId, targets: ['p1'] }).state
+    expect(state.players[0].statuses).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'wherewolf.darkest-night.status.hex' })]))
+    expect(state.players[1].statuses.some((status) => status.id === 'wherewolf.base.status.shadow-protection')).toBe(false)
+  })
+
+  it('lets Witch detect a Curse whenever Necromancer was publicly possible', () => {
+    let state = createInitialState(officialSetup([ROLE.witch, D.necromancer, ROLE.farmer]))
+    state = executeAbilityForTest(state, 'p1', `${D.necromancer}.curse`, ['p0', 'p2'])
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const protect = availableCommand(state)
+    expect(protect).toMatchObject({ type: 'choose', abilityId: `${ROLE.witch}.protect` })
+    if (protect.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: protect.actorId, abilityId: protect.abilityId, targets: ['p2'] }).state
+    expect(state.pendingAnnouncements.map((announcement) => announcement.message)).toContain('Player 3: CURSED')
+
+    let absentState = createInitialState(officialSetup([ROLE.witch, ROLE.farmer, ROLE.farmer], [ROLE.witch, ROLE.farmer, D.necromancer]))
+    absentState.pipeline = 'cycle'; absentState.cycle = 1; absentState.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); absentState.phaseId = 'official.night.actions'
+    const absentProtect = availableCommand(absentState)
+    expect(absentProtect).toMatchObject({ type: 'choose', abilityId: `${ROLE.witch}.protect` })
+    if (absentProtect.type !== 'choose') return
+    absentState = applyCommand(absentState, { type: 'choose', actorId: absentProtect.actorId, abilityId: absentProtect.abilityId, targets: ['p1'] }).state
+    expect(absentState.pendingAnnouncements.map((announcement) => announcement.message)).toContain('Player 2: NOT CURSED')
   })
 
   it('lets Igor protect both Vampire and Nosferatu from backlash in one game', () => {
