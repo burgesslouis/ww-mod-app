@@ -49,7 +49,7 @@ export default function App() {
   async function updateSession(next: GameSession) { await saveSession(next); setSession(next) }
   function openEditor(artifact: Artifact) { setEditArtifact(artifact); setScreen('editor') }
 
-  if (!ready) return <div className="boot"><img src={logoUrl} alt="" /><p>Lighting the lantern…</p></div>
+  if (!ready) return <div className="boot"><img src={logoUrl} alt="" /><p>Loading…</p></div>
   if (screen === 'game' && session?.roleDeal && !session.roleDeal.finished) return <RoleDistribution session={session} onChange={updateSession} />
 
   return (

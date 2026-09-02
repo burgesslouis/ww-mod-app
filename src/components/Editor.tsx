@@ -55,7 +55,7 @@ function RoleBuilder({ role, traitCatalogue, editable, onChange }: { role: RoleD
   function setDisplayTeam(value: string) {
     if (!editable) return
     const next = { ...role }
-    const label = value.trim()
+    const label = value
     if (label) next.displayTeam = label
     else delete next.displayTeam
     onChange(next)

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { GameSession } from '../domain/types'
 import { availableDealCards, confirmDealCard, finishRoleDeal, pickDealCard } from '../engine/dealing'
 import { currentState } from '../engine/engine'
-import { capitaliseLabel, friendlyFactionLabel } from '../ui/labels'
+import { moderatorTraits, roleTeamLabel } from '../ui/labels'
 
 const cardBackUrl = `${import.meta.env.BASE_URL}role-card-back.png`
 
@@ -21,7 +21,7 @@ export default function RoleDistribution({ session, onChange }: { session: GameS
   const rules = currentState(session).rules
   const role = rules.roles.find((role) => role.id === selectedCard?.roleId)
   const faction = [...rules.scenario.factions, ...rules.scenario.packs.flatMap((pack) => pack.factions ?? [])].find((faction) => faction.id === role?.faction)
-  const factionLabel = role?.displayTeam ?? (faction ? (faction.name === 'Neutral' ? 'Third Party' : faction.name) : role ? friendlyFactionLabel(role.faction) : undefined)
+  const factionLabel = role ? roleTeamLabel(role, faction?.name) : undefined
   const traitDefinitions = [...rules.scenario.packs.flatMap((pack) => pack.traitDefinitions ?? []), ...(role?.traitDefinitions ?? [])]
 
   useEffect(() => {
@@ -73,9 +73,8 @@ export default function RoleDistribution({ session, onChange }: { session: GameS
             {factionLabel && <p className="deal-faction">{factionLabel}</p>}
             <p className="deal-summary">{role.text.summary}</p>
             {role.text.description !== role.text.summary && <p className="deal-description">{role.text.description}</p>}
-            {role.traits.length > 0 && <div className="deal-traits">{role.traits.map((id) => {
-              const trait = traitDefinitions.find((trait) => trait.id === id)
-              return <span key={id} style={{ borderColor: trait?.colour }}>{trait?.label ?? capitaliseLabel(id.split('.').at(-1)?.replace(/-/g, ' ') ?? id)}</span>
+            {moderatorTraits(role.traits, traitDefinitions).length > 0 && <div className="deal-traits">{moderatorTraits(role.traits, traitDefinitions).map((trait) => {
+              return <span key={trait.id} style={{ borderColor: trait.colour }}>{trait.label}</span>
             })}</div>}
           </article>
         </div>

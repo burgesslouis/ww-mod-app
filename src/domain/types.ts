@@ -96,6 +96,7 @@ export type Selector =
   | { kind: 'allPlayers'; life?: 'alive' | 'dead' | 'any' }
   | { kind: 'publicPossibleRoles'; trait?: string; activeTrigger?: 'setup.action' | 'day.action' | 'night.action' }
   | { kind: 'trait'; trait: string; life?: 'alive' | 'dead' | 'any' }
+  | { kind: 'status'; status: string; life?: 'alive' | 'dead' | 'any'; source?: 'self' }
   | { kind: 'faction'; faction: string; life?: 'alive' | 'dead' | 'any' }
   | { kind: 'notFaction'; faction: string; life?: 'alive' | 'dead' | 'any' }
   | { kind: 'role'; roleId: string; life?: 'alive' | 'dead' | 'any' }

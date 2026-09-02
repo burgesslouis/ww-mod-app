@@ -1,7 +1,7 @@
 import { withChecksum } from '../domain/artifacts'
 import { BASE_PACK } from './base'
 import { DARKEST_PACK_ID, DARKEST_ROLE as D, FACTION, HIDDEN_PACK_ID, HIDDEN_ROLE as H, OFFICIAL_SCENARIO_ID, PACK_ID, ROLE, TRAIT } from '../domain/ids'
-import type { AbilityDefinition, PackDefinition, RoleDefinition, ScenarioDefinition, StateVariable, TraitDefinition } from '../domain/types'
+import type { AbilityDefinition, Condition, PackDefinition, RoleDefinition, ScenarioDefinition, StateVariable, TraitDefinition } from '../domain/types'
 
 const TRAITS: TraitDefinition[] = [
   { id: TRAIT.shadow, label: 'Shadow', colour: '#665776', description: 'Must be removed before a Human victory.', builtIn: true },
@@ -18,6 +18,8 @@ const TRAITS: TraitDefinition[] = [
 
 const ids: string[] = [...Object.values(D), ...Object.values(H)]
 const uuid = (id: string) => `30000000-0000-4000-8000-${String(ids.indexOf(id) + 1).padStart(12, '0')}`
+const atGameEnd = (condition: Condition): Condition => ({ op: 'all', conditions: [{ op: 'event', field: 'terminal', compare: 'eq', value: true }, condition] })
+const noActiveCurses: Condition = { op: 'count', selector: { kind: 'status', status: 'wherewolf.darkest-night.status.curse', life: 'alive', source: 'self' }, compare: 'eq', value: 0 }
 
 const CALLOUTS: Record<string, string> = {
   'wherewolf.darkest-night.ability.wolf-intro': 'meet the Pack',
@@ -58,7 +60,7 @@ function role(id: string, name: string, faction: string, categories: string[], t
   const namespace = id.includes('.darkest-night.') ? 'wherewolf.darkest-night' : 'wherewolf.hidden-motives'
   return withChecksum({
     id,
-    meta: { kind: 'role', namespace, uuid: uuid(id), name, version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
+    meta: { kind: 'role', namespace, uuid: uuid(id), name, version: '1.0.1', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
     faction, ...(displayTeam ? { displayTeam } : {}), categories, traits,
     traitDefinitions: traits.map((traitId) => TRAITS.find((trait) => trait.id === traitId) ?? { id: traitId, label: traitId.split('.').at(-1) ?? traitId, colour: '#8c857b' }),
     multiplicity: { min: 0, max: maximumCopies }, text: { summary, description }, constants: [], state, requirements: [], abilities, statuses,
@@ -90,7 +92,7 @@ export const DARKEST_NIGHT_ROLES: RoleDefinition[] = [
     'Joins the Pack from N1 but loses while the Alpha Wolf lives.', 'Meets the wolves, Defector, and Hag on N0. The Alpha Wolf cannot kill it. It loses if the Alpha Wolf is alive when play ends.', [
       wolfIntro, outcastBite,
       { id: `${D.outcastWolf}.alpha-protection`, name: 'Protected from Alpha', kind: 'passive', trigger: 'attack.resolving', condition: { op: 'all', conditions: [{ op: 'targetIsSelf' }, { op: 'hasRole', subject: 'actor', roleId: ROLE.alphaWolf }] }, effects: [{ type: 'preventEvent', reason: 'The Outcast Wolf is protected from the Alpha Wolf.' }] },
-      { id: `${D.outcastWolf}.alpha-loss`, name: 'Outcast condition', kind: 'passive', trigger: 'victory.check', condition: { op: 'count', selector: { kind: 'role', roleId: ROLE.alphaWolf, life: 'alive' }, compare: 'gt', value: 0 }, effects: [{ type: 'personalLose', targets: { kind: 'self' }, reason: 'The Alpha Wolf was still alive.' }] },
+      { id: `${D.outcastWolf}.alpha-loss`, name: 'Outcast condition', kind: 'passive', trigger: 'victory.check', condition: atGameEnd({ op: 'count', selector: { kind: 'role', roleId: ROLE.alphaWolf, life: 'alive' }, compare: 'gt', value: 0 }), effects: [{ type: 'personalLose', targets: { kind: 'self' }, reason: 'The Alpha Wolf was still alive.' }] },
     ]),
   role(D.loneWolf, 'Lone Wolf', FACTION.loneWolf, ['Shadow', 'Night', 'Alternate Victory'], [TRAIT.werewolf, TRAIT.corrupt, TRAIT.shadow],
     'Takes the bite only after the Wolf Pack is gone.', 'Meets the wolves, Defector, and Hag. Other Werewolves cannot kill it. It follows its own Shadow victory.', [
@@ -106,7 +108,7 @@ export const DARKEST_NIGHT_ROLES: RoleDefinition[] = [
   role(D.poacher, 'Poacher', FACTION.village, ['Information', 'Protection'], [], 'Counts Werewolves and can stop a lone bite.', 'On N0, learns the Werewolf count and whether the Lone Wolf is present. The moderator applies its signal during a solo bite.', [
     setup(`${D.poacher}.information`, 'Count the wolves', 35, [{ type: 'learnCount', targets: { kind: 'trait', trait: TRAIT.werewolf, life: 'alive' }, label: 'Werewolves in play' }, { type: 'learnRolePresence', roleId: D.loneWolf }], 'Tell the Poacher how many Werewolves are in play and whether the Lone Wolf is present.'),
   ]),
-  role(D.hag, 'Hag', FACTION.anyShadow, ['Any Shadow', 'Mystic'], [TRAIT.shadow, TRAIT.corrupt, TRAIT.mystic, TRAIT.anyShadowWinner], 'Hexes Mystics who choose it.', 'All Shadow roles locate the Hag on N0. A Mystic who targets the Hag receives negative information and cannot protect while the Hag lives.', [
+  role(D.hag, 'Hag', FACTION.anyShadow, ['Any Shadow', 'Mystic'], [TRAIT.corrupt, TRAIT.mystic, TRAIT.anyShadowWinner], 'Hexes Mystics who choose it.', 'All Shadow roles locate the Hag on N0. A Mystic who targets the Hag receives negative information and cannot protect while the Hag lives.', [
     setup(`${D.hag}.shadow-intro`, 'Meet the Shadows', 94, [{ type: 'learnPlayers', targets: { kind: 'trait', trait: TRAIT.shadow, life: 'alive' }, label: 'Shadow players' }], 'Show the Hag the other Shadow players.'),
     { id: `${D.hag}.hex-setup`, name: 'Hex', kind: 'passive', trigger: 'setup.action', condition: { op: 'all', conditions: [{ op: 'targetIsSelf' }, { op: 'hasTrait', subject: 'actor', trait: TRAIT.mystic }] }, effects: [{ type: 'addStatus', targets: { kind: 'eventActor' }, status: { id: 'wherewolf.darkest-night.status.hex', name: 'Hex', data: { forceNegativeInformation: true, blockProtection: true, sourceMustLive: true } }, duration: 'permanent' }] },
     { id: `${D.hag}.hex`, name: 'Hex', kind: 'passive', trigger: 'night.action', condition: { op: 'all', conditions: [{ op: 'targetIsSelf' }, { op: 'hasTrait', subject: 'actor', trait: TRAIT.mystic }] }, effects: [{ type: 'addStatus', targets: { kind: 'eventActor' }, status: { id: 'wherewolf.darkest-night.status.hex', name: 'Hex', data: { forceNegativeInformation: true, blockProtection: true, sourceMustLive: true } }, duration: 'permanent' }] },
@@ -138,16 +140,16 @@ export const DARKEST_NIGHT_ROLES: RoleDefinition[] = [
   ]),
   role(D.necromancer, 'Necromancer', FACTION.necromancer, ['Shadow', 'Curse', 'Alternate Victory'], [TRAIT.shadow, TRAIT.corrupt, TRAIT.mystic], 'Curses two players and threatens a one-morning ritual.', 'Cursed players appear Corrupt and receive one extra vote in both tallies. When the last Curse is gone, announce the ritual; if it is not stopped, Necromancer wins.', [
     { ...setup(`${D.necromancer}.curse`, 'Place two Curses', 70, [{ type: 'addStatus', targets: { kind: 'chosen' }, status: { id: 'wherewolf.darkest-night.status.curse', name: 'Curse', traits: [TRAIT.corrupt], data: { sourceMustLive: true }, abilities: [{ id: 'wherewolf.darkest-night.status.curse.vote', name: 'Curse vote', kind: 'status', trigger: 'vote.beforeTally', condition: { op: 'targetIsSelf' }, effects: [{ type: 'modifyVotesReceived', targets: { kind: 'self' }, operation: 'add', value: 1 }] }] }, duration: 'permanent' }], 'Choose two different players to Curse.'), target: { label: 'Players to Curse', min: 2, max: 2, selector: { kind: 'allPlayers', life: 'alive' }, excludeSelf: true, distinct: true } },
-    night(`${D.necromancer}.ritual`, 'Check the ritual', 88, { label: 'Start the ritual if all Curses are gone', min: 0, max: 1, selector: { kind: 'self' }, allowNone: true }, [{ type: 'conditional', condition: { op: 'state', key: 'ritualStarted', compare: 'eq', value: true }, effects: [{ type: 'endGame', winningFaction: FACTION.necromancer, reason: 'The Necromancer completed the ritual.' }], otherwise: [{ type: 'setState', key: 'ritualStarted', value: true }, { type: 'announce', message: 'The Necromancer ritual has started.', visibility: 'public', category: 'Ritual' }] }], 'If the last active Curse is gone, select the Necromancer to start the ritual. If it was already started and not stopped, select again to complete it.', { activeFromNight: 1 }),
+    night(`${D.necromancer}.ritual`, 'Check the ritual', 88, { label: 'Start or complete the ritual', min: 0, max: 1, selector: { kind: 'self' }, allowNone: true }, [{ type: 'conditional', condition: { op: 'all', conditions: [noActiveCurses, { op: 'count', selector: { kind: 'chosen' }, compare: 'gt', value: 0 }] }, effects: [{ type: 'conditional', condition: { op: 'state', key: 'ritualStarted', compare: 'eq', value: true }, effects: [{ type: 'endGame', winningFaction: FACTION.necromancer, reason: 'The Necromancer completed the ritual.' }], otherwise: [{ type: 'setState', key: 'ritualStarted', value: true }, { type: 'announce', message: 'The Necromancer ritual has started.', visibility: 'public', category: 'Ritual' }] }] }], 'No living player has an active Curse from this Necromancer. Select the Necromancer to start the ritual, or to complete a ritual that started on a previous night. Choose Skip to leave it unchanged.', { activeFromNight: 1, condition: noActiveCurses }),
   ], [{ key: 'ritualStarted', label: 'Ritual started', type: 'boolean', initial: false }]),
-  role(D.undertaker, 'Undertaker', FACTION.village, ['Information'], [], 'Knows whether Necromancer is present.', 'The Undertaker learns whether Necromancer is present and can use the moderator trace to follow Curse eliminations.', [setup(`${D.undertaker}.check`, 'Check for Necromancer', 37, [{ type: 'learnRolePresence', roleId: D.necromancer }], 'Tell the Undertaker whether Necromancer is present.')], [], 1, undefined, 'Necromancer'),
+  role(D.undertaker, 'Undertaker', FACTION.necromancer, ['Information'], [], 'Supports the Necromancer and knows whether it is present.', 'The Undertaker wins with the Necromancer and learns whether it is present on Night 0.', [setup(`${D.undertaker}.check`, 'Check for Necromancer', 37, [{ type: 'learnRolePresence', roleId: D.necromancer }], 'Tell the Undertaker whether Necromancer is present.')]),
   role(D.possessed, 'Possessed', FACTION.possessed, ['Shadow', 'Transformation'], [TRAIT.shadow, TRAIT.corrupt, TRAIT.possessed], 'Passes possession to a chosen successor when killed outside a burn.', 'Choose a possible successor on N0. If the Possessed later dies other than by burning, that player becomes Possessed.', [
     { ...setup(`${D.possessed}.successor`, 'Choose a successor', 75, [{ type: 'linkRelationship', targets: { kind: 'chosen' }, relationship: 'wherewolf.darkest-night.relationship.possessed-successor' }], 'Choose the player who will inherit possession if this Possessed dies.'), target: { label: 'Possession successor', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' }, excludeSelf: true } },
     { id: `${D.possessed}.transfer`, name: 'Transfer possession', kind: 'passive', trigger: 'death.resolved', condition: { op: 'all', conditions: [{ op: 'targetIsSelf' }, { op: 'event', field: 'cause', compare: 'neq', value: 'Burned' }] }, effects: [{ type: 'transformRole', targets: { kind: 'relationship', relationship: 'wherewolf.darkest-night.relationship.possessed-successor' }, roleId: D.possessed }] },
   ]),
   role(D.vagrant, 'Vagrant', FACTION.neutral, ['Alternate Victory'], [], 'Wins after surviving a night with six or fewer living players.', 'At morning, if six or fewer players live, Vagrant wins personally and is eliminated. A living Vagrant also wins at normal game end.', [
     { id: `${D.vagrant}.threshold`, name: 'Vagrant threshold', kind: 'passive', trigger: 'morning.beforeVictory', condition: { op: 'all', conditions: [{ op: 'isAlive', subject: 'self' }, { op: 'count', selector: { kind: 'allPlayers', life: 'alive' }, compare: 'lte', value: 6 }] }, effects: [{ type: 'personalWin', targets: { kind: 'self' }, reason: 'Survived a night with six or fewer players.' }, { type: 'kill', targets: { kind: 'self' }, cause: 'Vagrant departed' }] },
-    { id: `${D.vagrant}.survive`, name: 'Vagrant survival', kind: 'passive', trigger: 'victory.check', condition: { op: 'isAlive', subject: 'self' }, effects: [{ type: 'personalWin', targets: { kind: 'self' }, reason: 'Survived to the end.' }] },
+    { id: `${D.vagrant}.survive`, name: 'Vagrant survival', kind: 'passive', trigger: 'victory.check', condition: atGameEnd({ op: 'isAlive', subject: 'self' }), effects: [{ type: 'personalWin', targets: { kind: 'self' }, reason: 'Survived to the end.' }] },
   ]),
   role(D.lyncher, 'Lyncher', FACTION.neutral, ['Alternate Victory'], [], 'Wins if one chosen player is burned.', 'Chooses a target on N0. The Lyncher wins if that target burns and dies the next morning after the target dies.', [
     { ...setup(`${D.lyncher}.target`, 'Choose the mark', 65, [{ type: 'linkRelationship', targets: { kind: 'chosen' }, relationship: 'wherewolf.darkest-night.relationship.lyncher-target' }], 'Choose one other player as the Lyncher’s mark.'), target: { label: 'Lyncher target', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' }, excludeSelf: true } },
@@ -215,7 +217,7 @@ export const HIDDEN_MOTIVES_ROLES: RoleDefinition[] = [
 
 export const DARKEST_NIGHT_PACK: PackDefinition = withChecksum({
   id: DARKEST_PACK_ID,
-  meta: { kind: 'pack', namespace: 'wherewolf.darkest-night', uuid: '40000000-0000-4000-8000-000000000001', name: 'Darkest Night', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
+  meta: { kind: 'pack', namespace: 'wherewolf.darkest-night', uuid: '40000000-0000-4000-8000-000000000001', name: 'Darkest Night', version: '1.0.1', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
   description: 'The official Darkest Night expansion. Minion and Thrall are created roles and are not dealt.', roleIds: DARKEST_NIGHT_ROLES.map((entry) => entry.id), roles: DARKEST_NIGHT_ROLES, traitDefinitions: TRAITS,
   factions: [
     { id: FACTION.loneWolf, name: 'Lone Wolf', colour: '#984a49', alignment: 'shadow' }, { id: FACTION.vampire, name: 'Vampire', colour: '#772f49', alignment: 'shadow' },
@@ -227,7 +229,7 @@ export const DARKEST_NIGHT_PACK: PackDefinition = withChecksum({
 
 export const HIDDEN_MOTIVES_PACK: PackDefinition = withChecksum({
   id: HIDDEN_PACK_ID,
-  meta: { kind: 'pack', namespace: 'wherewolf.hidden-motives', uuid: '40000000-0000-4000-8000-000000000002', name: 'Hidden Motives', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
+  meta: { kind: 'pack', namespace: 'wherewolf.hidden-motives', uuid: '40000000-0000-4000-8000-000000000002', name: 'Hidden Motives', version: '1.0.1', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
   description: 'The official Hidden Motives expansion. Ghost, Presence, and Spectre are moderator-assigned Spirits and are not dealt.', roleIds: HIDDEN_MOTIVES_ROLES.map((entry) => entry.id), roles: HIDDEN_MOTIVES_ROLES, traitDefinitions: TRAITS,
   factions: [
     { id: FACTION.inquisition, name: 'Inquisition', colour: '#b48a4c', alignment: 'human' }, { id: FACTION.criminals, name: 'Criminals', colour: '#706b66', alignment: 'human' },
@@ -245,7 +247,7 @@ const ballotActions = [`${H.executioner}.signal`, `${H.mayor}.signal`, `${H.prea
 
 export const OFFICIAL_SCENARIO: ScenarioDefinition = withChecksum({
   id: OFFICIAL_SCENARIO_ID,
-  meta: { kind: 'scenario', namespace: 'wherewolf.official', uuid: '50000000-0000-4000-8000-000000000001', name: 'Official Game', version: '1.0.0', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
+  meta: { kind: 'scenario', namespace: 'wherewolf.official', uuid: '50000000-0000-4000-8000-000000000001', name: 'Official Game', version: '1.0.1', schemaVersion: 1, engineVersion: 'wherewolf.rules/v1', checksum: '', builtIn: true },
   description: 'Base Game with optional Darkest Night and Hidden Motives packs.',
   factions: [],
   capabilities: ['private-information', 'public-role-ranges', 'hidden-setup-state', 'shadow-attacks', 'revival', 'aggregate-voting', 'announcements', 'relationships', 'personal-victory', 'transformations', 'spirits', 'crusades'],

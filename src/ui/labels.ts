@@ -1,3 +1,6 @@
+import { TRAIT } from '../domain/ids'
+import type { RoleDefinition, TraitDefinition } from '../domain/types'
+
 export function capitaliseLabel(value: string): string {
   const label = value.trim()
   return label ? label[0].toUpperCase() + label.slice(1) : label
@@ -23,7 +26,20 @@ export function friendlyFactionLabel(value: string): string {
     'any-shadow': 'Shadow',
     'any-human': 'Human',
   }
-  return known[key] ?? technicalLabel(raw)
+  return known[key] ?? technicalLabel(key).replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+}
+
+export function roleTeamLabel(role: RoleDefinition, factionName?: string): string {
+  const label = role.displayTeam?.trim() || factionName || friendlyFactionLabel(role.faction)
+  return label === 'Neutral' ? 'Third Party' : label === 'Any Shadow' ? 'Shadow' : label === 'Any Human' ? 'Human' : label
+}
+
+export function moderatorTraits(ids: string[], catalogue: TraitDefinition[]): TraitDefinition[] {
+  return [TRAIT.corrupt, TRAIT.mystic].filter((id) => ids.includes(id)).map((id) => ({
+    id, colour: id === TRAIT.corrupt ? '#a94f4b' : '#8273a8',
+    ...catalogue.find((trait) => trait.id === id),
+    label: id === TRAIT.corrupt ? 'Corrupt' : 'Mystic',
+  }))
 }
 
 /** Make the setup-night prefix unambiguous in moderator-facing action titles. */

@@ -7,11 +7,11 @@ export function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => key !== 'checksum')
+      .filter(([key, child]) => key !== 'checksum' && child !== undefined)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, child]) => `${JSON.stringify(key)}:${stableStringify(child)}`).join(',')}}`
   }
-  return JSON.stringify(value)
+  return JSON.stringify(value) ?? 'null'
 }
 
 export function checksum(value: unknown): string {
@@ -61,8 +61,52 @@ export function previewImport(input: string, installed: Array<RoleDefinition | P
   const supportedEffects = new Set(['inspectTrait', 'inspectFaction', 'inspectStatus', 'learnRolesAbsent', 'learnRoleIdentity', 'learnRolePresence', 'learnFactionMembers', 'learnPlayers', 'learnCount', 'learnPresence', 'conditional', 'addStatus', 'removeStatus', 'preventEvent', 'redirectEvent', 'queueAttack', 'kill', 'revive', 'transformRole', 'changeFaction', 'linkRelationship', 'modifyVotesReceived', 'forceBallot', 'grantExtraVotes', 'suppressAction', 'replaceQualifiedCandidate', 'allowCandidateVote', 'announce', 'setState', 'incrementState', 'setStateCount', 'personalWin', 'personalLose', 'endGame', 'cancelNext', 'noop'])
   const supportedPhases = new Set(['role-actions', 'pause', 'aggregate-vote', 'qualification', 'burn-resolution', 'attack-resolution', 'announcements', 'victory-check', 'cycle-end'])
   const embeddedRoles = 'faction' in artifact ? [artifact] : 'roles' in artifact ? artifact.roles : artifact.packs.flatMap((pack) => pack.roles)
-  const effectTypes = embeddedRoles.flatMap((role) => role.abilities.flatMap((ability) => ability.effects.map((effect) => String((effect as { type?: unknown }).type))))
-  for (const type of new Set(effectTypes)) if (!supportedEffects.has(type)) issues.push(`Unsupported effect primitive “${type}”.`)
+  const supportedConditions = new Set(['always', 'all', 'any', 'not', 'actorIsSelf', 'targetIsSelf', 'targetIsRelationship', 'hasTrait', 'hasFaction', 'hasStatus', 'hasRole', 'isAlive', 'ownerInBallot', 'targetRoleHasTrait', 'packSelected', 'publicRolePossible', 'cycle', 'state', 'fact', 'event', 'count'])
+  const supportedSelectors = new Set(['self', 'chosen', 'eventActor', 'eventTarget', 'allPlayers', 'publicPossibleRoles', 'trait', 'status', 'faction', 'notFaction', 'role', 'relationship', 'highestRoleOrder'])
+  const supportedTriggers = new Set(['setup.action', 'day.action', 'night.action', 'vote.beforeTally', 'vote.afterTally', 'ballot.qualified', 'burn.resolving', 'burn.resolved', 'attack.attempted', 'attack.successful', 'attack.redirected', 'attack.resolving', 'attack.prevented', 'death.resolved', 'morning.beforeVictory', 'morning.announcements', 'victory.check'])
+  const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  function primitive(value: unknown, field: string, supported: Set<string>, kind: string, path: string) {
+    const node = object(value), type = String(node[field])
+    if (!supported.has(type)) issues.push(`Unsupported ${kind} primitive “${type}” at ${path}.`)
+    return node
+  }
+  function selector(value: unknown, path: string) { primitive(value, 'kind', supportedSelectors, 'selector', path) }
+  function condition(value: unknown, path: string) {
+    if (value === undefined) return
+    const node = primitive(value, 'op', supportedConditions, 'condition', path)
+    if (Array.isArray(node.conditions)) node.conditions.forEach((child, index) => condition(child, `${path}.conditions[${index}]`))
+    if (node.condition !== undefined) condition(node.condition, `${path}.condition`)
+    if (node.selector !== undefined) selector(node.selector, `${path}.selector`)
+  }
+  function abilities(value: unknown, path: string) {
+    if (!Array.isArray(value)) { issues.push(`Unsupported ability list at ${path}.`); return }
+    value.forEach((item, index) => {
+      const at = `${path}[${index}]`, node = primitive(item, 'trigger', supportedTriggers, 'trigger', at)
+      condition(node.condition, `${at}.condition`)
+      if (node.target !== undefined) selector(object(node.target).selector, `${at}.target.selector`)
+      effects(node.effects, `${at}.effects`)
+    })
+  }
+  function visitStatus(value: unknown, path: string) {
+    const node = object(value)
+    if (node.abilities !== undefined) abilities(node.abilities, `${path}.abilities`)
+  }
+  function effects(value: unknown, path: string) {
+    if (!Array.isArray(value)) { issues.push(`Unsupported effect list at ${path}.`); return }
+    value.forEach((item, index) => {
+      const at = `${path}[${index}]`, node = primitive(item, 'type', supportedEffects, 'effect', at)
+      condition(node.condition, `${at}.condition`)
+      for (const key of ['targets', 'guarded', 'replacement']) if (node[key] !== undefined) selector(node[key], `${at}.${key}`)
+      for (const key of ['value', 'amount']) if (object(node[key]).count !== undefined) selector(object(node[key]).count, `${at}.${key}.count`)
+      if (node.effects !== undefined) effects(node.effects, `${at}.effects`)
+      if (node.otherwise !== undefined) effects(node.otherwise, `${at}.otherwise`)
+      if (node.type === 'addStatus') visitStatus(node.status, `${at}.status`)
+    })
+  }
+  embeddedRoles.forEach((role) => {
+    abilities(role.abilities, `${role.meta.name}.abilities`)
+    role.statuses?.forEach((definition, index) => visitStatus(definition, `${role.meta.name}.statuses[${index}]`))
+  })
   if ('packs' in artifact) for (const type of new Set([...artifact.setupPipeline, ...artifact.cyclePipeline].map((phase) => String((phase as { type?: unknown }).type)))) if (!supportedPhases.has(type)) issues.push(`Unsupported phase primitive “${type}”.`)
   const sameIdentity = installed.find((item) => item.meta.namespace === artifact.meta.namespace && item.meta.uuid === artifact.meta.uuid && item.meta.version === artifact.meta.version)
   const unsupported = issues.some((issue) => issue.startsWith('Requires') || issue.startsWith('Unsupported') || issue.startsWith('Checksum'))

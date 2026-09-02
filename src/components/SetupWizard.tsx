@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { GameSetup, PackDefinition, PlayerSetup, PublicRoleRange, RoleDefinition, ScenarioDefinition } from '../domain/types'
 import { PACK_ID, TRAIT } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
-import { capitaliseLabel, displayActionLabel, friendlyFactionLabel } from '../ui/labels'
+import { capitaliseLabel, displayActionLabel, moderatorTraits, roleTeamLabel } from '../ui/labels'
+import { reconcileGardenedSeats } from '../ui/setup'
 
 interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
@@ -29,6 +30,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const [showSummary, setShowSummary] = useState(false)
   const [error, setError] = useState<string>('')
   const [starting, setStarting] = useState(false)
+  const [allocationNotice, setAllocationNotice] = useState('')
 
   const selectedPacks = useMemo(() => packs.filter((pack) => packIds.includes(pack.id)), [packs, packIds])
   const selectedRoles = useMemo(() => {
@@ -46,17 +48,24 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     return ability && owners.length ? [{ id: abilityId, name: displayActionLabel(capitaliseLabel(ability.name)), roles: owners.map((role) => role.meta.name) }] : []
   })
   const exactDeck = activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, () => role.id))
+  const gardenedPlayers = reconcileGardenedSeats(players, exactDeck)
   const publicRoles: PublicRoleRange[] = [
     ...activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max })),
     ...possibleSpirits.map((role) => ({ roleId: role.id, min: 0, max: role.multiplicity.max })),
   ]
   const setup: GameSetup = {
-    scenarioId, packIds, players: players.map((player) => assignment === 'random' ? { ...player, lockedRoleId: undefined } : player), publicRoles, exactDeck, assignment, distributeRolesInApp,
+    scenarioId, packIds, players: gardenedPlayers.map((player) => assignment === 'random' ? { ...player, lockedRoleId: undefined } : player), publicRoles, exactDeck, assignment, distributeRolesInApp,
     nightOrder: nightOrderEntries.map((entry) => entry.id), silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
   const validation = validateSetup(setup)
 
   useEffect(() => { window.scrollTo({ top: 0 }) }, [step])
+  useEffect(() => {
+    if (gardenedPlayers !== players) {
+      setPlayers(gardenedPlayers)
+      setAllocationNotice('The deck changed. Seats without an available card have returned to Shuffle this seat.')
+    }
+  }, [gardenedPlayers, players])
 
   function togglePack(id: string) { setPackIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]) }
   function updatePlayer(id: string, patch: Partial<PlayerSetup>) { setPlayers((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item)) }
@@ -107,7 +116,6 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         {scenarios.length > 1 && <label className="field"><span>Scenario</span><select value={scenarioId} onChange={(event) => { const next = scenarios.find((item) => item.id === event.target.value)!; setScenarioId(next.id); setPackIds(next.defaultPackIds); setNightOrder(next.nightOrder) }}>{scenarios.map((item) => <option key={item.id} value={item.id}>{item.meta.name}</option>)}</select></label>}
         <div className="scenario-preview"><strong>{scenario.meta.name}</strong><p>{scenario.description}</p></div>
         <h3>Attached packs</h3><div className="choice-grid">{packs.map((pack) => <button key={pack.id} className={`choice-card ${packIds.includes(pack.id) ? 'selected' : ''}`} onClick={() => togglePack(pack.id)}><span className="check-box">{packIds.includes(pack.id) && <Check />}</span><div><strong>{pack.meta.name}</strong><p>{pack.roles.filter((role) => !role.categories.includes('Status')).length} dealt roles · {pack.meta.builtIn ? 'Built in' : 'Custom'}</p></div></button>)}</div>
-        <h3>Night calls</h3><button type="button" aria-pressed={silentNight} className={`choice-card night-mode ${silentNight ? 'selected' : ''}`} onClick={() => setSilentNight((value) => !value)}><span className="check-box">{silentNight && <Check />}</span><div><strong>Silent night</strong><p>Skip spoken role call-outs. Only show the moderator the players who actually need to wake.</p></div></button>
       </>}
 
       {step === 1 && <>
@@ -122,7 +130,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         <div className="role-config-table">
           <div className="role-config-head"><span>Available role</span><span>Announced min</span><span>Announced max</span><span>In play</span></div>
           {availableRoles.map((role) => { const config = roleConfig[role.id] ?? defaultRoleConfig(role); return <div className={`role-config-row ${config.possible ? 'enabled' : ''}`} key={role.id}>
-            <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{factionNames.get(role.faction) ?? friendlyFactionLabel(role.faction)} · {role.categories.slice(0, 2).map(capitaliseLabel).join(', ')}</small></div></label>
+            <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{[roleTeamLabel(role, factionNames.get(role.faction)), ...moderatorTraits(role.traits, role.traitDefinitions ?? []).map((trait) => trait.label)].join(' · ')}</small></div></label>
             <div className="role-config-control"><small>Announced min</small><Stepper value={config.min} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'min', value)} /></div>
             <div className="role-config-control"><small>Announced max</small><Stepper value={config.max} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'max', value)} /></div>
             <div className="role-config-control"><small>In play</small><ExactCount role={role} config={config} onChange={(value) => updateRole(role.id, 'exact', value)} /></div>
@@ -140,7 +148,11 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
 
       {step === 3 && <>
         <div className="section-title"><div><span className="section-number">04</span><div><h2>Deal and review</h2><p>Choose how roles are assigned, then review the night order.</p></div></div></div>
+        <div className="deal-options" aria-label="Before dealing">
+        <button type="button" aria-pressed={silentNight} className={`choice-card night-mode ${silentNight ? 'selected' : ''}`} onClick={() => setSilentNight((value) => !value)}><span className="check-box">{silentNight && <Check />}</span><div><strong>Silent Night</strong><p>Skip spoken call-outs. Wake only the players whose roles act, by tapping them.</p></div></button>
         <button type="button" aria-pressed={distributeRolesInApp} className={`choice-card deal-option ${distributeRolesInApp ? 'selected' : ''}`} onClick={() => setDistributeRolesInApp((value) => !value)}><span className="check-box">{distributeRolesInApp && <Check />}</span><div><strong>Use app to distribute roles</strong><p>Pass the phone around. Each player picks a card, reads their role and presses Ready.</p>{distributeRolesInApp && assignment === 'locked-random' && <p>Selected seats receive their assigned card. Other players draw from the remaining deck.</p>}</div></button>
+        </div>
+        {allocationNotice && <p className="allocation-notice" role="status">{allocationNotice}</p>}
         <div className="segmented"><button className={assignment === 'random' ? 'active' : ''} onClick={() => setAssignment('random')}><Shuffle /> Random allocation</button><button className={assignment === 'locked-random' ? 'active' : ''} onClick={() => setAssignment('locked-random')}><Leaf /> Gardened allocation</button></div>
         {assignment === 'locked-random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={item.lockedRoleId ?? ''} onChange={(event) => updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">Shuffle this seat</option>{activeRoles.filter((role) => roleConfig[role.id].exact > 0).map((role) => { const usedElsewhere = players.filter((player) => player.id !== item.id && player.lockedRoleId === role.id).length; const unavailable = usedElsewhere >= roleConfig[role.id].exact && item.lockedRoleId !== role.id; return <option key={role.id} value={role.id} disabled={unavailable}>{role.meta.name}</option> })}</select></label>)}</div>}
         <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div><div><dt>Night calls</dt><dd>{silentNight ? 'Silent' : 'Read aloud'}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>

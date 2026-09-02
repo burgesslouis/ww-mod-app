@@ -17,7 +17,7 @@ h1, h2, h3, p { margin-top: 0; }
 h1, h2, h3 { letter-spacing: -.025em; }
 h1 { font-family: Georgia, 'Times New Roman', serif; font-weight: 500; }
 p { line-height: 1.58; }
-.app-shell { min-height: 100vh; padding-bottom: 76px; }
+.app-shell { min-height: 100vh; }
 .topbar { height: 70px; border-bottom: 1px solid var(--line-soft); display: flex; align-items: center; padding: 0 clamp(18px, 4vw, 58px); gap: 24px; position: sticky; top: 0; z-index: 30; background: #141311e8; backdrop-filter: blur(18px); }
 .brand { display: grid; grid-template-columns: 35px auto; grid-template-rows: 20px 12px; column-gap: 10px; align-items: center; border: 0; background: transparent; color: var(--text); cursor: pointer; padding: 4px; }
 .brand img { grid-row: 1 / 3; width: 35px; height: 35px; object-fit: cover; border-radius: 50%; filter: sepia(.25) saturate(.85); }
@@ -102,6 +102,14 @@ p { line-height: 1.58; }
 .choice-card strong { display: block; margin: 1px 0 6px; }
 .choice-card p { font-size: 11px; color: var(--muted); margin: 0; }
 .night-mode { width: 100%; }
+.deal-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 22px; }
+.deal-options .choice-card { width: 100%; margin: 0; min-width: 0; height: 100%; }
+.deal-options .choice-card > div { min-width: 0; }
+.allocation-notice { padding: 12px 14px; border-left: 2px solid var(--gold); background: #252018; color: var(--gold-bright); font-size: 13px; }
+.assignment-list label, .assignment-list select, .review-grid > div, .command-stage { min-width: 0; }
+.assignment-list label > span, .night-action-label, .role-check > div, .phase-card h1, .winner-list strong, .role-card h3 { overflow-wrap: anywhere; }
+.assignment-list select { width: 100%; }
+.choice-card:focus-visible, .role-check:has(input:focus-visible), .exact-checkbox:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 3px; }
 .count-pill { border: 1px solid var(--line); padding: 7px 10px; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
 .player-list { display: grid; gap: 8px; margin-bottom: 14px; }
 .player-row { display: grid; grid-template-columns: 32px 1fr 42px; align-items: center; gap: 8px; }
@@ -333,4 +341,16 @@ p { line-height: 1.58; }
   .game-statusbar { height: 47px; padding: 0 13px; }.game-statusbar small { display: none; }.command-stage { padding: 12px 10px 90px; }.command-topline { margin-bottom: 7px; }.history-actions .icon-button { padding: 0 7px; }.history-actions .icon-button:not(:last-child):not(:nth-child(3)) { font-size: 0; }.phase-card { padding: 25px 17px; }.phase-card h1 { font-size: 38px; }.target-grid { grid-template-columns: repeat(2, 1fr); }.command-button { min-height: 56px; }.winner-list { grid-template-columns: 1fr; }.vote-stepper { grid-template-columns: 37px 43px 37px; }.vote-stepper input { width: 43px; }.drawer { padding: 18px; }
   .library-tabs, .editor-tabs { overflow-x: auto; justify-content: flex-start; }.library-tabs button, .editor-tabs button { flex: none; padding: 0 15px; }.filters { grid-template-columns: 1fr 1fr; }.filters .search { grid-column: 1 / 3; }.filters input, .filters select { min-width: 0; width: 100%; }.role-library-grid, .artifact-grid { grid-template-columns: 1fr; }.role-card { min-height: 230px; }
   .editor-page { padding: 8px 10px 80px; }.editor-toolbar { grid-template-columns: auto 1fr; }.editor-toolbar > div:nth-child(2) { text-align: left; }.editor-toolbar > div:nth-child(2) .eyebrow { justify-content: flex-start; }.editor-toolbar > div:last-child { grid-column: 1 / 3; }.editor-toolbar > div:last-child .primary { flex: 1; }.built-in-banner { display: grid; }.form-grid { grid-template-columns: 1fr; }.form-grid .wide { grid-column: auto; }.editor-section, .advanced-editor, .test-bench { padding: 18px 13px; }.constant-list > div { grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); padding: 10px 0; }.constant-list code { grid-column: 1 / 2; }.constant-list button { grid-column: 2; }.template-row { display: grid; grid-template-columns: repeat(2, 1fr); }.template-row button { justify-content: center; }.trait-palette { grid-template-columns: 1fr; }.trait-chip { min-width: 100%; }.new-trait-form { grid-template-columns: 1fr 78px; }.ability-card > header { grid-template-columns: auto 1fr 20px; }.embedded-list { grid-template-columns: 1fr 1fr; }.pipeline-preview, .test-bench { grid-template-columns: 1fr; }.bench-output { border-left: 0; border-top: 1px solid var(--line); padding: 20px 0 0; }
+  .deal-options { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 18px; }
+  .deal-options .choice-card { padding: 14px; align-items: flex-start; }
+  .deal-options .choice-card p { font-size: 12px; line-height: 1.5; }
+  .assignment-list { gap: 14px; }.assignment-list select { font-size: 16px; min-height: 48px; }
+  .review-grid { gap: 22px; }.night-role-tags span { font-size: 10px; }
+  .command-stage { padding-bottom: 24px; }.phase-card { padding: 20px 16px; }
+  .phase-card h1 { font-size: clamp(29px, 8vw, 34px); line-height: 1.15; }
+  .command-topline { flex-wrap: wrap; gap: 4px; }.history-actions { flex-wrap: wrap; }
+  .command-topline .icon-button { min-height: 44px; }
+  .library-page > .page-heading { display: grid; gap: 16px; }
+  .home-screen { padding-top: 30px; padding-bottom: 32px; }
+  .field input, .field select, .field textarea, .vote-stepper input { font-size: 16px; }
 }

@@ -1,6 +1,7 @@
 import { BASE_ROLES, BASE_SCENARIO, roleName } from '../data/base'
 import { DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { FACTION, TRAIT } from '../domain/ids'
+import { friendlyFactionLabel, technicalLabel } from '../ui/labels'
 import type {
   AbilityDefinition, ApplyResult, Condition, Effect, GameCommand, GameEvent, GameSession, GameSetup,
   EffectiveProperty, FactionDefinition, GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
@@ -43,7 +44,7 @@ function factionDefinitions(state: GameState): FactionDefinition[] {
 }
 function factionDefinition(state: GameState, id: string): FactionDefinition | undefined { return factionDefinitions(state).find((faction) => faction.id === id) }
 export function factionName(state: GameState, id: string): string {
-  const name = factionDefinition(state, id)?.name ?? id.split('.').at(-1) ?? id
+  const name = factionDefinition(state, id)?.name ?? friendlyFactionLabel(id)
   return name === 'Neutral' ? 'Third Party' : name
 }
 function factionOf(state: GameState, player: PlayerState): string { return player.factionOverride ?? roleOf(state, player)?.faction ?? 'unknown' }
@@ -99,7 +100,7 @@ export function validateSetup(setup: GameSetup): ValidationResult {
   const names = setup.players.map((player) => player.name.trim())
   if (names.some((name) => !name)) issue(issues, 'players', 'Every player needs a name.')
   if (new Set(names.map((name) => name.toLocaleLowerCase())).size !== names.length) issue(issues, 'players', 'Player names must be unique.')
-  if (setup.exactDeck.length !== setup.players.length) issue(issues, 'exactDeck', `The secret deck has ${setup.exactDeck.length} roles for ${setup.players.length} players.`)
+  if (setup.exactDeck.length !== setup.players.length) issue(issues, 'exactDeck', `The deck has ${setup.exactDeck.length} roles for ${setup.players.length} players.`)
   const exactCounts = new Map<string, number>()
   setup.exactDeck.forEach((id, index) => {
     if (!known.has(id)) issue(issues, `exactDeck.${index}`, `Unknown role ${id}.`)
@@ -114,7 +115,7 @@ export function validateSetup(setup: GameSetup): ValidationResult {
     const count = exactCounts.get(range.roleId) ?? 0
     if (count < range.min || count > range.max) issue(issues, `publicRoles.${index}`, `${known.get(range.roleId)?.meta.name ?? range.roleId} count ${count} is outside the public ${range.min}–${range.max} range.`)
   })
-  exactCounts.forEach((_count, id) => { if (!rangeIds.has(id)) issue(issues, 'publicRoles', `${known.get(id)?.meta.name ?? id} is in the secret deck but not the public possible-role list.`) })
+  exactCounts.forEach((_count, id) => { if (!rangeIds.has(id)) issue(issues, 'publicRoles', `${known.get(id)?.meta.name ?? id} is in the deck but not the public possible-role list.`) })
   roles.filter((entry) => exactCounts.has(entry.id)).forEach((entry) => {
     [...entry.requirements, ...entry.abilities.flatMap((ability) => ability.requires ?? [])].forEach((capability) => {
       if (!scenario.capabilities.includes(capability)) issue(issues, `roles.${entry.id}`, `${entry.meta.name} requires “${capability}”, which ${scenario.meta.name} does not provide.`)
@@ -137,12 +138,12 @@ export function validateSetup(setup: GameSetup): ValidationResult {
   if (setup.assignment === 'manual') {
     const assigned = setup.manualAssignments ?? {}
     const assignedDeck = setup.players.map((player) => assigned[player.id]).filter(Boolean).sort()
-    if (assignedDeck.length !== setup.players.length || JSON.stringify(assignedDeck) !== JSON.stringify([...setup.exactDeck].sort())) issue(issues, 'manualAssignments', 'Manual assignments must use every secret-deck role exactly once.')
+    if (assignedDeck.length !== setup.players.length || JSON.stringify(assignedDeck) !== JSON.stringify([...setup.exactDeck].sort())) issue(issues, 'manualAssignments', 'Manual assignments must use every deck role exactly once.')
   }
-  setup.players.forEach((player) => { if (player.lockedRoleId && !setup.exactDeck.includes(player.lockedRoleId)) issue(issues, `players.${player.id}`, `${player.name} is locked to a role that is not in the secret deck.`) })
+  setup.players.forEach((player) => { if (player.lockedRoleId && !setup.exactDeck.includes(player.lockedRoleId)) issue(issues, `players.${player.id}`, `${player.name} is locked to a role that is not in the deck.`) })
   const lockedCounts = new Map<string, number>()
   setup.players.forEach((player) => { if (player.lockedRoleId) lockedCounts.set(player.lockedRoleId, (lockedCounts.get(player.lockedRoleId) ?? 0) + 1) })
-  lockedCounts.forEach((count, roleId) => { if (count > (exactCounts.get(roleId) ?? 0)) issue(issues, 'players', `More seats are locked to ${known.get(roleId)?.meta.name ?? roleId} than exist in the secret deck.`) })
+  lockedCounts.forEach((count, roleId) => { if (count > (exactCounts.get(roleId) ?? 0)) issue(issues, 'players', `More seats are locked to ${known.get(roleId)?.meta.name ?? roleId} than exist in the deck.`) })
   return { valid: !issues.some((entry) => entry.severity === 'error'), issues }
 }
 
@@ -247,6 +248,7 @@ function select(state: GameState, selector: Selector, context: EventContext): st
     case 'allPlayers': return state.players.filter(lifeFilter).map((player) => player.id)
     case 'publicPossibleRoles': return state.setup.publicRoles.map((range) => state.rules.roles.find((role) => role.id === range.roleId)).filter((role): role is RoleDefinition => Boolean(role)).filter((role) => !selector.trait || role.traits.includes(selector.trait)).filter((role) => !selector.activeTrigger || role.abilities.some((ability) => ability.trigger === selector.activeTrigger)).map((role) => role.id)
     case 'trait': return state.players.filter((player) => lifeFilter(player) && hasTrait(state, player.id, selector.trait)).map((player) => player.id)
+    case 'status': return state.players.filter((player) => lifeFilter(player) && activeStatuses(state, player).some((status) => status.id === selector.status && (!selector.source || status.sourcePlayerId === context.ownerId))).map((player) => player.id)
     case 'faction': return state.players.filter((player) => lifeFilter(player) && factionOf(state, player) === selector.faction).map((player) => player.id)
     case 'notFaction': return state.players.filter((player) => lifeFilter(player) && factionOf(state, player) !== selector.faction).map((player) => player.id)
     case 'role': return state.players.filter((player) => lifeFilter(player) && player.roleId === selector.roleId).map((player) => player.id)
@@ -526,11 +528,7 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     case 'personalWin': targets.forEach((id) => { if (!state.personalWinners.some((winner) => winner.playerId === id)) state.personalWinners.push({ playerId: id, reason: effect.reason }) }); return `personal victory: ${effect.reason}`
     case 'personalLose': targets.forEach((id) => { if (!state.personalLosers.some((loser) => loser.playerId === id)) state.personalLosers.push({ playerId: id, reason: effect.reason }) }); return `personal loss: ${effect.reason}`
     case 'endGame': {
-      const winners = effect.winningTrait ? state.players.filter((player) => hasTrait(state, player.id, effect.winningTrait!)).map((player) => player.id) : effect.winningFaction ? state.players.filter((player) => factionOf(state, player) === effect.winningFaction).map((player) => player.id) : []
-      state.winners = [...new Set([...winners, ...state.personalWinners.map((winner) => winner.playerId)])]
-      state.winningFactions = effect.winningFaction ? [effect.winningFaction] : []
-      state.gameOver = true
-      emit(state, 'victory.check', `Game over. ${effect.reason}`, 'public', { data: { winners: state.winners } })
+      finalizeVictory(state, { faction: effect.winningFaction, trait: effect.winningTrait, reason: effect.reason, type: 'ability' })
       return `game ended: ${effect.reason}`
     }
     case 'cancelNext': {
@@ -890,7 +888,7 @@ function evaluateVictory(state: GameState) {
   const morningEvent = emit(state, 'morning.beforeVictory', 'Resolving hidden morning role effects.', 'moderator')
   dispatch(state, 'morning.beforeVictory', { event: morningEvent, chosen: [], prevented: false })
   if (state.gameOver) return
-  const checkEvent = emit(state, 'victory.check', 'Checking role and scenario victory conditions.', 'moderator')
+  const checkEvent = emit(state, 'victory.check', 'Checking role and scenario victory conditions.', 'moderator', { data: { terminal: false } })
   dispatch(state, 'victory.check', { event: checkEvent, chosen: [], prevented: false })
   if (state.gameOver) return
   let terminal: { faction: string; reason: string; type: string } | undefined
@@ -899,7 +897,8 @@ function evaluateVictory(state: GameState) {
     if (rule.type === 'relationship-final-pair') {
       if (alive.length === 2 && state.relationships.some((rel) => rel.type === rule.relationship && new Set(alive.map((player) => player.id)).has(rel.from) && new Set(alive.map((player) => player.id)).has(rel.to))) terminal = { faction: rule.faction, reason: 'The linked pair are the final two alive.', type: rule.type }
     } else if (rule.type === 'faction-eliminated') {
-      if (!alive.some((player) => hasTrait(state, player.id, rule.eliminatedTrait) && !(rule.excludedFactions ?? []).includes(factionOf(state, player)))) terminal = { faction: rule.winningFaction, reason: `No living player has ${rule.eliminatedTrait}.`, type: rule.type }
+      const traitLabel = state.rules.roles.flatMap((role) => role.traitDefinitions ?? []).find((trait) => trait.id === rule.eliminatedTrait)?.label ?? technicalLabel(rule.eliminatedTrait.split('.').at(-1) ?? rule.eliminatedTrait)
+      if (!alive.some((player) => hasTrait(state, player.id, rule.eliminatedTrait) && !(rule.excludedFactions ?? []).includes(factionOf(state, player)))) terminal = { faction: rule.winningFaction, reason: `All ${traitLabel} players have been eliminated.`, type: rule.type }
     } else {
       const counted = alive.filter((player) => hasTrait(state, player.id, rule.countingTrait) && factionOf(state, player) === rule.winningFaction).length
       if (counted > 0 && counted >= alive.length - counted) terminal = { faction: rule.winningFaction, reason: 'The winning faction reached parity.', type: rule.type }
@@ -907,24 +906,34 @@ function evaluateVictory(state: GameState) {
     if (terminal) break
   }
   if (!terminal) return
-  const victoryEvent = emit(state, 'victory.check', terminal.reason, 'moderator', { data: { winningFaction: terminal.faction } })
+  finalizeVictory(state, terminal)
+}
+
+/** All terminal paths award faction supporters and final personal victories together. */
+function finalizeVictory(state: GameState, terminal: { faction?: string; trait?: string; reason: string; type: string }) {
+  if (state.gameOver) return
+  // Set this before reactions so a custom end-game effect cannot recursively end the game.
+  state.gameOver = true
+  const victoryEvent = emit(state, 'victory.check', terminal.reason, 'moderator', { data: { terminal: true, winningFaction: terminal.faction, winningTrait: terminal.trait } })
+  dispatch(state, 'victory.check', { event: victoryEvent, chosen: [], prevented: false })
   state.relationships.filter((relationship) => relationship.type.endsWith('.guarded')).forEach((relationship) => dispatch(state, 'victory.check', { event: { ...victoryEvent, targetId: relationship.to }, chosen: [], prevented: false }))
-  const alignment = factionDefinition(state, terminal!.faction)?.alignment
+  const alignment = terminal.faction ? factionDefinition(state, terminal.faction)?.alignment : undefined
   const littleFolkAlive = state.players.filter((player) => player.alive && hasTrait(state, player.id, TRAIT.littleFolk)).length
   const factionWinners = state.players.filter((player) => {
+    if (terminal.trait) return hasTrait(state, player.id, terminal.trait)
+    if (!terminal.faction) return false
     const playerAlignment = factionDefinition(state, factionOf(state, player))?.alignment
     if (factionOf(state, player) === terminal!.faction || (alignment === 'human' && playerAlignment === 'human')) return true
     if (alignment === 'human' && hasTrait(state, player.id, TRAIT.anyHumanWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
     if (alignment === 'shadow' && hasTrait(state, player.id, TRAIT.anyShadowWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
     if ([FACTION.vampire, FACTION.nosferatu].includes(terminal!.faction as typeof FACTION.vampire | typeof FACTION.nosferatu) && hasTrait(state, player.id, TRAIT.undeadSupport)) return true
     const spiritAlignment = activeStatuses(state, player).find((status) => status.traits?.includes(TRAIT.spirit))?.data?.winningAlignment
-    return spiritAlignment === alignment
+    return Boolean(spiritAlignment && alignment && spiritAlignment === alignment)
   }).map((player) => player.id)
   const lovers = terminal.type !== 'parity' ? state.relationships.filter((rel) => rel.type.endsWith('.romeo') && state.players.find((player) => player.id === rel.from)?.alive && state.players.find((player) => player.id === rel.to)?.alive).flatMap((rel) => [rel.from, rel.to]) : []
   const losers = new Set(state.personalLosers.map((loser) => loser.playerId))
   state.winners = [...new Set([...factionWinners, ...lovers, ...state.personalWinners.map((winner) => winner.playerId)])].filter((id) => !losers.has(id))
-  state.winningFactions = [...new Set([terminal.faction, ...(lovers.length ? ['wherewolf.base.faction.lovers'] : [])])]
-  state.gameOver = true
+  state.winningFactions = [...new Set([...(terminal.faction ? [terminal.faction] : []), ...(lovers.length ? ['wherewolf.base.faction.lovers'] : [])])]
   emit(state, 'victory.check', `Game over. ${terminal.reason}`, 'public', { data: { winners: state.winners } })
 }
 
@@ -1055,11 +1064,13 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
     const groupedActions = ability.simultaneous ? simultaneousActions(state, ability) : []
     const participants = [...new Map(groupedActions.map(({ actor: participant }) => [participant.id, participant])).values()]
     const sourceLabel = ability.simultaneous?.label ?? actor.name
-    const event = emit(state, ability.trigger, `${sourceLabel} resolved ${ability.name}.`, 'moderator', { actorId: actor.id, targets: unique, targetId: unique[0], data: { abilityId: ability.id, abilityIds: groupedActions.map(({ ability: groupedAbility }) => groupedAbility.id), participantIds: participants.map((participant) => participant.id) } })
-    dispatch(state, ability.trigger, { event, chosen: unique, prevented: false })
+    const skipped = Boolean(ability.target && ability.target.min === 0 && ability.target.max > 0 && unique.length === 0)
+    const event = emit(state, ability.trigger, `${sourceLabel} ${skipped ? 'skipped' : 'resolved'} ${ability.name}.`, 'moderator', { actorId: actor.id, targets: unique, targetId: unique[0], data: { abilityId: ability.id, skipped, abilityIds: groupedActions.map(({ ability: groupedAbility }) => groupedAbility.id), participantIds: participants.map((participant) => participant.id) } })
+    if (!skipped) dispatch(state, ability.trigger, { event, chosen: unique, prevented: false })
     const announcementStart = state.pendingAnnouncements.length
     const actionsToExecute = groupedActions.length ? groupedActions : [{ actor, ability }]
     const effects = actionsToExecute.flatMap(({ actor: owner, ability: groupedAbility }) => {
+      if (skipped) return []
       const context: EventContext = { event, ownerId: owner.id, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, chosen: unique, prevented: false }
       return groupedAbility.effects.map((effect) => applyEffect(state, effect, context))
     })
@@ -1070,11 +1081,11 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
       if (moderatorResults.length && ability.resultPresentation !== 'inline') state.pendingAnnouncements.push({ message: [...new Set(moderatorResults.map((announcement) => announcement.message))].join(' · '), category: 'Private result', visibility: 'moderator' })
     }
     actionsToExecute.forEach(({ actor: participant, ability: completedAbility }) => {
-      if (completedAbility.once === 'game') participant.roleState[`ability-used:${completedAbility.id}`] = true
+      if (!skipped && completedAbility.once === 'game') participant.roleState[`ability-used:${completedAbility.id}`] = true
       const key = actionKey(state, participant.id, completedAbility.id)
       if (!state.completedActions.includes(key)) state.completedActions.push(key)
     })
-    const resolution = unique.length ? `Targets: ${unique.map((id) => playerLabel(state, id)).join(', ')}.` : participants.length ? `Participants: ${participants.map((participant) => participant.name).join(', ')}.` : 'No target selected.'
+    const resolution = skipped ? 'Skipped; the power remains available.' : unique.length ? `Targets: ${unique.map((id) => playerLabel(state, id)).join(', ')}.` : participants.length ? `Participants: ${participants.map((participant) => participant.name).join(', ')}.` : 'No target selected.'
     trace(state, `${sourceLabel} · ${ability.name}`, resolution, [...new Set(effects)], event.id)
     settleAutomaticPhases(state)
     }
