@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { GameSetup, PackDefinition, PlayerSetup, PublicRoleRange, RoleDefinition, ScenarioDefinition } from '../domain/types'
 import { PACK_ID, TRAIT } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
-import { capitaliseLabel } from '../ui/labels'
+import { capitaliseLabel, friendlyFactionLabel } from '../ui/labels'
 
 interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
@@ -35,7 +35,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     const selectedIds = new Set(selectedPacks.flatMap((pack) => pack.roleIds))
     return roles.filter((role) => selectedIds.has(role.id))
   }, [roles, selectedPacks])
-  const factionNames = useMemo(() => new Map([...scenario.factions, ...selectedPacks.flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction.name])), [scenario.factions, selectedPacks])
+  const factionNames = useMemo(() => new Map([...scenario.factions, ...selectedPacks.flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction.name === 'Neutral' ? 'Third Party' : faction.name])), [scenario.factions, selectedPacks])
   const availableRoles = useMemo(() => selectedRoles.filter((role) => !role.categories.includes('Status')), [selectedRoles])
   const spiritRoles = selectedRoles.filter((role) => role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
   const possibleSpirits = spiritRoles.filter((role) => roleConfig[role.id]?.possible)
@@ -122,7 +122,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         <div className="role-config-table">
           <div className="role-config-head"><span>Available role</span><span>Announced min</span><span>Announced max</span><span>In play</span></div>
           {availableRoles.map((role) => { const config = roleConfig[role.id] ?? defaultRoleConfig(role); return <div className={`role-config-row ${config.possible ? 'enabled' : ''}`} key={role.id}>
-            <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{factionNames.get(role.faction) ?? capitaliseLabel(role.faction.split('.').at(-1) ?? '')} · {role.categories.slice(0, 2).map(capitaliseLabel).join(', ')}</small></div></label>
+            <label className="role-check"><input type="checkbox" checked={config.possible} onChange={(event) => setPossible(role.id, event.target.checked)} /><span className="check-box">{config.possible && <Check />}</span><div><strong>{role.meta.name}</strong><small>{factionNames.get(role.faction) ?? friendlyFactionLabel(role.faction)} · {role.categories.slice(0, 2).map(capitaliseLabel).join(', ')}</small></div></label>
             <div className="role-config-control"><small>Announced min</small><Stepper value={config.min} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'min', value)} /></div>
             <div className="role-config-control"><small>Announced max</small><Stepper value={config.max} disabled={!config.possible} onChange={(value) => updateRole(role.id, 'max', value)} /></div>
             <div className="role-config-control"><small>In play</small><ExactCount role={role} config={config} onChange={(value) => updateRole(role.id, 'exact', value)} /></div>
@@ -142,7 +142,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         <div className="section-title"><div><span className="section-number">04</span><div><h2>Deal and review</h2><p>Choose how roles are assigned, then review the night order.</p></div></div></div>
         <button type="button" aria-pressed={distributeRolesInApp} className={`choice-card deal-option ${distributeRolesInApp ? 'selected' : ''}`} onClick={() => setDistributeRolesInApp((value) => !value)}><span className="check-box">{distributeRolesInApp && <Check />}</span><div><strong>Use app to distribute roles</strong><p>Pass the phone around. Each player picks a card, reads their role and presses Ready.</p>{distributeRolesInApp && assignment === 'locked-random' && <p>Selected seats receive their assigned card. Other players draw from the remaining deck.</p>}</div></button>
         <div className="segmented"><button className={assignment === 'random' ? 'active' : ''} onClick={() => setAssignment('random')}><Shuffle /> Random allocation</button><button className={assignment === 'locked-random' ? 'active' : ''} onClick={() => setAssignment('locked-random')}><Leaf /> Gardened allocation</button></div>
-        {assignment === 'locked-random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={item.lockedRoleId ?? ''} onChange={(event) => updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">Shuffle this seat</option>{activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, (_, index) => <option key={`${role.id}-${index}`} value={role.id}>{role.meta.name}</option>))}</select></label>)}</div>}
+        {assignment === 'locked-random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={item.lockedRoleId ?? ''} onChange={(event) => updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">Shuffle this seat</option>{activeRoles.map((role) => <option key={role.id} value={role.id}>{role.meta.name}{roleConfig[role.id].exact > 0 ? '' : ' (not in deck)'}</option>)}</select></label>)}</div>}
         <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div><div><dt>Night calls</dt><dd>{silentNight ? 'Silent' : 'Read aloud'}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>
           <div><h3>Night order</h3><p className="muted">Actions for possible roles are shown in this order.</p><div className="night-order">{nightOrderEntries.map((entry, index) => <div key={entry.id}><span>{index + 1}</span><div className="night-action-label"><strong>{entry.name}</strong><div className="night-role-tags">{entry.roles.map((role) => <span key={role}>{role}</span>)}</div></div><button disabled={index === 0} onClick={() => moveNight(entry.id, -1)}><ChevronUp /></button><button disabled={index === nightOrderEntries.length - 1} onClick={() => moveNight(entry.id, 1)}><ChevronDown /></button></div>)}</div></div>
         </div>

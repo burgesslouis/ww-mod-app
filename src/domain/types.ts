@@ -200,6 +200,8 @@ export interface RoleDefinition {
   id: string
   meta: ArtifactMeta
   faction: string
+  /** Optional moderator-facing team or win-condition label. */
+  displayTeam?: string
   categories: string[]
   traits: string[]
   traitDefinitions?: TraitDefinition[]

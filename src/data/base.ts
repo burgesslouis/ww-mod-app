@@ -176,7 +176,7 @@ export const BASE_PACK: PackDefinition = Object.freeze(withChecksum<PackDefiniti
   roleIds: BASE_ROLES.map((entry) => entry.id), roles: BASE_ROLES, traitDefinitions: BASE_TRAITS,
   factions: [
     { id: FACTION.village, name: 'Village', colour: '#d8c594', alignment: 'human' }, { id: FACTION.wolves, name: 'Wolf Pack', colour: '#b64d46', alignment: 'shadow' },
-    { id: FACTION.neutral, name: 'Neutral', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
+    { id: FACTION.neutral, name: 'Third Party', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
   ],
 }))
 
@@ -186,7 +186,7 @@ export const BASE_SCENARIO: ScenarioDefinition = Object.freeze(withChecksum<Scen
   description: 'The open-ended Base Game: N0 setup, aggregate voting, Ballot, night actions, morning victory, then announcements.',
   factions: [
     { id: FACTION.village, name: 'Village', colour: '#d8c594', alignment: 'human' }, { id: FACTION.wolves, name: 'Wolf Pack', colour: '#b64d46', alignment: 'shadow' },
-    { id: FACTION.neutral, name: 'Neutral', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
+    { id: FACTION.neutral, name: 'Third Party', colour: '#938f84', alignment: 'neutral' }, { id: FACTION.lovers, name: 'Lovers', colour: '#c66d8c', alignment: 'neutral' },
   ],
   capabilities: ['private-information', 'public-role-ranges', 'hidden-setup-state', 'shadow-attacks', 'revival', 'aggregate-voting', 'announcements', 'relationships', 'personal-victory'],
   defaultPackIds: [PACK_ID], packs: [BASE_PACK], roleOverrides: {},

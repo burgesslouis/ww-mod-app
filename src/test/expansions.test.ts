@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { BASE_PACK } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
-import { DARKEST_PACK_ID, DARKEST_ROLE as D, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
+import { DARKEST_PACK_ID, DARKEST_ROLE as D, FACTION, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
 import type { GameSetup } from '../domain/types'
-import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest, resolveAttackForTest, validateSetup } from '../engine/engine'
+import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, factionName, killPlayerForTest, resolveAttackForTest, validateSetup } from '../engine/engine'
 
 const allRoles = [...BASE_PACK.roles, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]
 
@@ -241,13 +241,31 @@ describe('Official expansion defaults', () => {
   it('derives current moderator-facing properties from canonical state', () => {
     const state = createInitialState(officialSetup([ROLE.wizard, ROLE.alphaWolf, ROLE.farmer]))
     state.players[0].statuses.push({ id: 'test-gun', name: 'Gun', duration: 'day', appliedCycle: 1 })
-    expect(effectiveProperties(state, 'p0').map((property) => property.label)).toEqual(expect.arrayContaining(['Human', 'Village', 'Mystic', 'Gun']))
+    expect(effectiveProperties(state, 'p0').map((property) => property.label)).toEqual(['Village', 'Mystic'])
     state.players[0].factionOverride = 'wherewolf.base.faction.wolves'
     state.players[0].statuses = []
     const changed = effectiveProperties(state, 'p0').map((property) => property.label)
-    expect(changed).toEqual(expect.arrayContaining(['Shadow', 'Wolf Pack', 'Mystic']))
+    expect(changed).toEqual(['Wolf Pack', 'Mystic'])
     expect(changed).not.toContain('Human')
     expect(changed).not.toContain('Gun')
+  })
+
+  it.each([
+    [ROLE.alphaWolf, ['Wolf Pack', 'Corrupt']],
+    [ROLE.bard, ['Village']],
+    [D.necromancer, ['Necromancer', 'Corrupt', 'Mystic']],
+    [D.undertaker, ['Necromancer']],
+    [D.hag, ['Shadow', 'Corrupt', 'Mystic']],
+    [ROLE.sinner, ['Village', 'Corrupt']],
+  ])('shows only the useful team and status properties for %s', (roleId, expected) => {
+    const state = createInitialState(officialSetup([roleId, ROLE.farmer, ROLE.farmer]))
+    expect(effectiveProperties(state, 'p0').map((property) => property.label)).toEqual(expected)
+  })
+
+  it('labels neutral roles as Third Party', () => {
+    const state = createInitialState(officialSetup([ROLE.jester, ROLE.farmer, ROLE.farmer]))
+    expect(effectiveProperties(state, 'p0').map((property) => property.label)).toEqual(['Third Party'])
+    expect(factionName(state, FACTION.neutral)).toBe('Third Party')
   })
 
   it('makes expansion-only phases dormant with Base Roles alone', () => {

@@ -42,7 +42,10 @@ function factionDefinitions(state: GameState): FactionDefinition[] {
   return [...new Map([...state.rules.scenario.factions, ...selectedPacks.flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction])).values()]
 }
 function factionDefinition(state: GameState, id: string): FactionDefinition | undefined { return factionDefinitions(state).find((faction) => faction.id === id) }
-export function factionName(state: GameState, id: string): string { return factionDefinition(state, id)?.name ?? id.split('.').at(-1) ?? id }
+export function factionName(state: GameState, id: string): string {
+  const name = factionDefinition(state, id)?.name ?? id.split('.').at(-1) ?? id
+  return name === 'Neutral' ? 'Third Party' : name
+}
 function factionOf(state: GameState, player: PlayerState): string { return player.factionOverride ?? roleOf(state, player)?.faction ?? 'unknown' }
 function statusIsActive(state: GameState, status: PlayerState['statuses'][number]): boolean {
   if (status.data?.sourceMustLive && status.sourcePlayerId && !state.players.find((player) => player.id === status.sourcePlayerId)?.alive) return false
@@ -66,14 +69,16 @@ export function effectiveProperties(state: GameState, playerId: string): Effecti
   const traits = new Map(state.rules.scenario.packs.filter((pack) => state.packIds.includes(pack.id)).flatMap((pack) => pack.traitDefinitions ?? []).map((trait) => [trait.id, trait]))
   state.rules.roles.flatMap((definition) => definition.traitDefinitions ?? []).forEach((trait) => { if (!traits.has(trait.id)) traits.set(trait.id, trait) })
   const properties: EffectiveProperty[] = []
-  if (faction?.alignment) properties.push({ id: `alignment:${faction.alignment}`, label: faction.alignment[0].toUpperCase() + faction.alignment.slice(1), kind: 'alignment', colour: faction.alignment === 'human' ? '#7f9d7b' : faction.alignment === 'shadow' ? '#8a5b70' : '#938f84' })
-  properties.push({ id: `faction:${factionOf(state, player)}`, label: faction?.name ?? factionOf(state, player).split('.').at(-1) ?? factionOf(state, player), kind: 'faction', colour: faction?.colour })
-  traitsOf(state, player).forEach((id) => { const trait = traits.get(id); properties.push({ id: `trait:${id}`, label: trait?.label ?? id.split('.').at(-1)?.replace(/-/g, ' ') ?? id, kind: 'trait', colour: trait?.colour }) })
-  activeStatuses(state, player).forEach((status) => properties.push({ id: `status:${status.id}`, label: status.name, kind: 'status' }))
-  if (player.initialRoleId !== player.roleId) properties.push({ id: 'transformation:role', label: `Transformed from ${state.rules.roles.find((definition) => definition.id === player.initialRoleId)?.meta.name ?? player.initialRoleId}`, kind: 'transformation' })
-  role?.state.forEach((definition) => {
-    const value = player.roleState[definition.key]
-    if (value !== null && value !== undefined && value !== false && value !== '') properties.push({ id: `state:${definition.key}`, label: `${definition.label}: ${String(value).replace(/_/g, ' ')}`, kind: 'state' })
+  const factionId = factionOf(state, player)
+  const fallbackTeam = factionId === FACTION.neutral ? 'Third Party' : factionId.split('.').at(-1) ?? factionId
+  const team = (player.factionOverride ? faction?.name : role?.displayTeam ?? faction?.name) ?? fallbackTeam
+  const teamLabel = factionId === FACTION.anyShadow ? 'Shadow' : factionId === FACTION.anyHuman ? 'Human' : team === 'Neutral' ? 'Third Party' : team
+  properties.push({ id: `faction:${factionId}`, label: teamLabel, kind: 'faction', colour: faction?.colour })
+  const visibleTraits = new Set<string>([TRAIT.corrupt, TRAIT.mystic])
+  traitsOf(state, player).forEach((id) => {
+    if (!visibleTraits.has(id)) return
+    const trait = traits.get(id)
+    properties.push({ id: `trait:${id}`, label: trait?.label ?? id.split('.').at(-1)?.replace(/-/g, ' ') ?? id, kind: 'trait', colour: trait?.colour })
   })
   return [...new Map(properties.map((property) => [property.id, property])).values()]
 }
