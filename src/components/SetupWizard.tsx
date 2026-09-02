@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { GameSetup, PackDefinition, PlayerSetup, PublicRoleRange, RoleDefinition, ScenarioDefinition } from '../domain/types'
 import { PACK_ID, TRAIT } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
-import { capitaliseLabel, friendlyFactionLabel } from '../ui/labels'
+import { capitaliseLabel, displayActionLabel, friendlyFactionLabel } from '../ui/labels'
 
 interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
@@ -43,7 +43,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const nightOrderEntries = nightOrder.flatMap((abilityId) => {
     const owners = activeRoles.filter((role) => role.abilities.some((ability) => ability.id === abilityId))
     const ability = owners.flatMap((role) => role.abilities).find((candidate) => candidate.id === abilityId)
-    return ability && owners.length ? [{ id: abilityId, name: capitaliseLabel(ability.name), roles: owners.map((role) => role.meta.name) }] : []
+    return ability && owners.length ? [{ id: abilityId, name: displayActionLabel(capitaliseLabel(ability.name)), roles: owners.map((role) => role.meta.name) }] : []
   })
   const exactDeck = activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, () => role.id))
   const publicRoles: PublicRoleRange[] = [

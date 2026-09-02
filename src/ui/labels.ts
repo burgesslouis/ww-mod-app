@@ -25,3 +25,8 @@ export function friendlyFactionLabel(value: string): string {
   }
   return known[key] ?? technicalLabel(raw)
 }
+
+/** Make the setup-night prefix unambiguous in moderator-facing action titles. */
+export function displayActionLabel(value: string): string {
+  return value.replace(/^N0(?=\s|$)/, 'Night 0')
+}

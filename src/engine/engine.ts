@@ -616,6 +616,10 @@ function readAloudCall(callName: string, ability: AbilityDefinition): string {
   return `${callName}, wake up and ${spokenAction(ability)}.`
 }
 
+function displayActionName(name: string): string {
+  return name.replace(/^N0(?=\s|$)/, 'Night 0')
+}
+
 function moderatorInstructions(ability: AbilityDefinition): string {
   const instructions = ability.instructions?.trim().replace(/^Wake\b[^.!?]*[.!?]\s*/i, '')
   return instructions || `Have them ${spokenAction(ability)}.`
@@ -705,7 +709,7 @@ export function availableCommand(state: GameState): PendingCommand {
   if (phase.type === 'role-actions') {
     const next = nextScheduledAction(state)
     if (!next) {
-      if (state.pipeline === 'setup') return { type: 'advance', title: 'N0 complete', description: 'Ask everyone to wake up and begin the first day.', actionLabel: 'Begin Day 1' }
+      if (state.pipeline === 'setup') return { type: 'advance', title: 'Night 0 complete', description: 'Ask everyone to wake up and begin the first day.', actionLabel: 'Begin Day 1' }
       if (phase.dependencyBarrier === 'after-attack-resolution') return { type: 'advance', title: 'The night is complete', description: 'Continue to the morning result.', actionLabel: 'Continue to morning' }
       return { type: 'advance', title: 'All active roles may sleep', description: 'All scheduled actions have been recorded. Continue to the night’s outcome.', actionLabel: 'Continue' }
     }
@@ -731,7 +735,8 @@ export function availableCommand(state: GameState): PendingCommand {
     const instructions = state.setup.silentNight
       ? `Wake ${formatList(participants.map((participant) => participant.name))}${participants.length > 1 ? ' together' : ''}. ${moderatorInstructions(next.ability)}`
       : `Say “${readAloudCall(callName, next.ability)}” ${moderatorInstructions(next.ability)}`
-    return { type: 'choose', actorId: actor.id, abilityId: next.ability.id, title: next.ability.simultaneous ? `${next.ability.simultaneous.label} · ${next.ability.name}` : `${actor.name} · ${next.ability.name}`, instructions, candidates, min: minimum, max: maximum, allowNone: next.ability.target?.allowNone ?? minimum === 0, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, information: information.length ? information : undefined }
+    const actionName = displayActionName(next.ability.name)
+    return { type: 'choose', actorId: actor.id, abilityId: next.ability.id, title: next.ability.simultaneous ? `${next.ability.simultaneous.label} · ${actionName}` : `${actor.name} · ${actionName}`, instructions, candidates, min: minimum, max: maximum, allowNone: next.ability.target?.allowNone ?? minimum === 0, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, information: information.length ? information : undefined }
   }
   if (phase.type === 'aggregate-vote') {
     const candidates = phase.vote === 'ballot' ? state.ballot.filter((id) => state.players.find((player) => player.id === id)?.alive) : state.players.filter((player) => player.alive).map((player) => player.id)
