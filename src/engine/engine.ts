@@ -98,6 +98,7 @@ export function validateSetup(setup: GameSetup): ValidationResult {
   const exactCounts = new Map<string, number>()
   setup.exactDeck.forEach((id, index) => {
     if (!known.has(id)) issue(issues, `exactDeck.${index}`, `Unknown role ${id}.`)
+    if (known.get(id)?.categories.includes('Status')) issue(issues, `exactDeck.${index}`, `${known.get(id)!.meta.name} is assigned during play and cannot be dealt.`)
     exactCounts.set(id, (exactCounts.get(id) ?? 0) + 1)
   })
   const rangeIds = new Set<string>()
@@ -350,6 +351,11 @@ function formatList(items: string[]): string {
   return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`
 }
 
+function possibleSpiritRoles(state: GameState): RoleDefinition[] {
+  const possible = new Set(state.setup.publicRoles.filter((range) => range.max > 0).map((range) => range.roleId))
+  return state.rules.roles.filter((role) => possible.has(role.id) && role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
+}
+
 function killPlayer(state: GameState, playerId: string, cause: string, context: EventContext, timing: 'now' | 'next-morning' = 'now') {
   const player = state.players.find((item) => item.id === playerId)
   if (!player?.alive || state.pendingDeaths.some((entry) => entry.playerId === playerId && entry.timing === timing)) return
@@ -363,7 +369,7 @@ function killPlayer(state: GameState, playerId: string, cause: string, context: 
   const deathMetadata = (state.facts.deathMetadata && typeof state.facts.deathMetadata === 'object' ? state.facts.deathMetadata : {}) as Record<string, unknown>
   deathMetadata[playerId] = { cause, wasCorrupt, roleId: player.roleId, faction: factionOf(state, player) }
   state.facts.deathMetadata = deathMetadata
-  const spiritRolesAvailable = state.rules.roles.some((role) => role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
+  const spiritRolesAvailable = possibleSpiritRoles(state).length > 0
   if (spiritRolesAvailable && !hasTrait(state, playerId, TRAIT.spirit) && !state.pendingSpiritAssignments.includes(playerId)) state.pendingSpiritAssignments.push(playerId)
   const nightDeaths = Array.isArray(state.facts.nightDeaths) ? state.facts.nightDeaths as string[] : []
   if (state.phaseId.includes('night')) state.facts.nightDeaths = [...new Set([...nightDeaths, playerId])]
@@ -549,7 +555,7 @@ function dispatch(state: GameState, trigger: AbilityDefinition['trigger'], conte
 function targetCandidates(state: GameState, actor: PlayerState, ability: AbilityDefinition): string[] {
   if (ability.effects.some((effect) => effect.type === 'learnRolesAbsent')) {
     const counts = new Map<string, number>(); state.setup.exactDeck.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1))
-    return state.setup.publicRoles.filter((range) => (counts.get(range.roleId) ?? 0) === 0).map((range) => range.roleId)
+    return state.setup.publicRoles.filter((range) => range.max > 0 && (counts.get(range.roleId) ?? 0) === 0 && !state.rules.roles.find((role) => role.id === range.roleId)?.categories.includes('Status')).map((range) => range.roleId)
   }
   if (ability.effects.some((effect) => effect.type === 'revive')) return (state.facts.nightDeaths as string[] | undefined) ?? []
   if (!ability.target) return []
@@ -681,12 +687,12 @@ export function availableCommand(state: GameState): PendingCommand {
   }
   const result = state.pendingAnnouncements.find((announcement) => announcement.visibility === 'moderator')
   if (result) return { type: 'advance', title: result.title ?? (result.category === 'Private result' ? 'Result' : result.category), description: result.message, actionLabel: result.actionLabel }
-  const spiritTarget = state.pendingSpiritAssignments.find((id) => {
+  const spiritRoles = possibleSpiritRoles(state)
+  const spiritTarget = spiritRoles.length > 0 && state.pendingSpiritAssignments.find((id) => {
     const player = state.players.find((item) => item.id === id)
     return player && !player.alive && !hasTrait(state, id, TRAIT.spirit)
   })
   if (spiritTarget) {
-    const spiritRoles = state.rules.roles.filter((role) => role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
     return { type: 'choose', actorId: spiritTarget, abilityId: ASSIGN_SPIRIT_ABILITY, title: `${playerLabel(state, spiritTarget)} died`, instructions: 'Decide whether to give this player a Spirit role. If you assign one, show the player that role before play continues.', candidates: spiritRoles.map((role) => role.id), min: 0, max: 1, allowNone: true }
   }
   const phase = currentPhase(state)
@@ -1018,7 +1024,7 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
     if (unique.length < pending.min || unique.length > pending.max || unique.some((target) => !pending.candidates.includes(target))) throw new Error(`Choose ${pending.min}–${pending.max} legal target(s).`)
     if (command.abilityId === ASSIGN_SPIRIT_ABILITY) {
       const player = state.players.find((item) => item.id === command.actorId)
-      const spirit = unique[0] ? state.rules.roles.find((role) => role.id === unique[0] && role.categories.includes('Status') && role.traits.includes(TRAIT.spirit)) : undefined
+      const spirit = possibleSpiritRoles(state).find((role) => role.id === unique[0])
       state.pendingSpiritAssignments = state.pendingSpiritAssignments.filter((id) => id !== command.actorId)
       if (player && spirit) {
         const metadata = ((state.facts.deathMetadata as Record<string, unknown> | undefined)?.[player.id] ?? {}) as Record<string, unknown>

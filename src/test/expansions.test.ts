@@ -3,7 +3,7 @@ import { BASE_PACK } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { DARKEST_PACK_ID, DARKEST_ROLE as D, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
 import type { GameSetup } from '../domain/types'
-import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest, resolveAttackForTest } from '../engine/engine'
+import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest, resolveAttackForTest, validateSetup } from '../engine/engine'
 
 const allRoles = [...BASE_PACK.roles, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]
 
@@ -88,14 +88,67 @@ describe('Official expansion defaults', () => {
     expect(command.type === 'choose' && command.instructions).not.toContain('Clairvoyant')
   })
 
-  it('lets the moderator decide whether to assign any Spirit after a death', () => {
-    let state = killPlayerForTest(createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.wizard])), 'p0', 'Burned')
+  it('lets the moderator decide whether to assign a selected Spirit after a death', () => {
+    const deck = [ROLE.farmer, ROLE.alphaWolf, ROLE.wizard]
+    let state = killPlayerForTest(createInitialState(officialSetup(deck, [...deck, H.ghost, H.presence, H.spectre])), 'p0', 'Burned')
     const pending = availableCommand(state)
     expect(pending).toMatchObject({ type: 'choose', actorId: 'p0', min: 0, max: 1 })
     expect(pending.type === 'choose' && pending.candidates).toEqual([H.ghost, H.presence, H.spectre])
     if (pending.type !== 'choose') return
     state = applyCommand(state, { type: 'choose', actorId: pending.actorId, abilityId: pending.abilityId, targets: [H.ghost] }).state
     expect(state.players[0].statuses.find((status) => status.id === 'wherewolf.hidden-motives.status.spirit')).toMatchObject({ name: 'Ghost', data: { winningAlignment: 'shadow' } })
+  })
+
+  it('does not queue Spirits merely because their pack and definitions are loaded', () => {
+    const state = killPlayerForTest(createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.wizard])), 'p0', 'Burned')
+    expect(state.pendingSpiritAssignments).toEqual([])
+    expect(availableCommand(state)).not.toMatchObject({ abilityId: 'wherewolf.hidden-motives.system.assign-spirit' })
+  })
+
+  it('ignores stale Spirit prompts in saved games with no Spirits selected', () => {
+    const state = killPlayerForTest(createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.wizard])), 'p0', 'Burned')
+    state.pendingSpiritAssignments = ['p0']
+    const resumed = JSON.parse(JSON.stringify(state))
+    expect(availableCommand(resumed)).not.toMatchObject({ abilityId: 'wherewolf.hidden-motives.system.assign-spirit' })
+    expect(() => applyCommand(resumed, { type: 'choose', actorId: 'p0', abilityId: 'wherewolf.hidden-motives.system.assign-spirit', targets: [H.ghost] })).toThrow('no longer current')
+  })
+
+  it('offers only selected Spirits with a positive possible count and rejects others', () => {
+    const deck = [ROLE.farmer, ROLE.alphaWolf, ROLE.wizard]
+    const setup = officialSetup(deck, [...deck, H.presence, H.spectre])
+    setup.publicRoles.find((range) => range.roleId === H.spectre)!.max = 0
+    const state = killPlayerForTest(createInitialState(setup), 'p0', 'Burned')
+    const pending = availableCommand(state)
+    expect(pending).toMatchObject({ type: 'choose', candidates: [H.presence] })
+    if (pending.type !== 'choose') throw new Error('Expected Spirit assignment')
+    for (const id of [H.ghost, H.spectre]) expect(() => applyCommand(state, { type: 'choose', actorId: pending.actorId, abilityId: pending.abilityId, targets: [id] })).toThrow('legal target')
+    const declined = applyCommand(state, { type: 'choose', actorId: pending.actorId, abilityId: pending.abilityId, targets: [] }).state
+    expect(declined.pendingSpiritAssignments).toEqual([])
+    expect(declined.players[0].statuses).toEqual([])
+  })
+
+  it('supports a custom Spirit through the same possible-role selection', () => {
+    const deck = [ROLE.farmer, ROLE.alphaWolf, ROLE.wizard]
+    const setup = officialSetup(deck)
+    const spirit = structuredClone(allRoles.find((role) => role.id === H.ghost)!)
+    spirit.id = 'custom.spirit'; spirit.meta.name = 'Custom Spirit'
+    setup.rules!.roles.push(spirit)
+    setup.publicRoles.push({ roleId: spirit.id, min: 0, max: 1 })
+    const state = killPlayerForTest(createInitialState(setup), 'p0', 'Burned')
+    expect(availableCommand(state)).toMatchObject({ candidates: [spirit.id] })
+  })
+
+  it('keeps Spirits out of dealt roles, Monk information and Amnesiac choices', () => {
+    expect(validateSetup(officialSetup([H.ghost, ROLE.farmer, ROLE.alphaWolf])).issues).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'exactDeck.0', message: expect.stringContaining('cannot be dealt') })]))
+    const deck = [ROLE.monk, ROLE.alphaWolf, ROLE.farmer]
+    const setup = officialSetup(deck, [...deck, ROLE.witch, ROLE.wizard, H.ghost])
+    setup.silentNight = true
+    const state = createInitialState(setup)
+    expect(availableCommand(state)).toMatchObject({ type: 'choose', candidates: [ROLE.witch, ROLE.wizard] })
+    const amnesiac = createInitialState(officialSetup([D.amnesiac, ROLE.alphaWolf, ROLE.farmer], [D.amnesiac, ROLE.alphaWolf, ROLE.farmer, H.ghost]))
+    amnesiac.pipeline = 'cycle'; amnesiac.cycle = 1; amnesiac.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); amnesiac.phaseId = 'official.night.actions'
+    const pending = availableCommand(amnesiac)
+    expect(pending.type === 'choose' && pending.candidates).not.toContain(H.ghost)
   })
 
   it('limits the second-night Amnesiac choice to publicly possible roles', () => {

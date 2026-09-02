@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Eye, Leaf, Minus, Plus, Shuffle, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { GameSetup, PackDefinition, PlayerSetup, PublicRoleRange, RoleDefinition, ScenarioDefinition } from '../domain/types'
-import { PACK_ID } from '../domain/ids'
+import { PACK_ID, TRAIT } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
 import { capitaliseLabel } from '../ui/labels'
 
@@ -37,6 +37,8 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   }, [roles, selectedPacks])
   const factionNames = useMemo(() => new Map([...scenario.factions, ...selectedPacks.flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction.name])), [scenario.factions, selectedPacks])
   const availableRoles = useMemo(() => selectedRoles.filter((role) => !role.categories.includes('Status')), [selectedRoles])
+  const spiritRoles = selectedRoles.filter((role) => role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
+  const possibleSpirits = spiritRoles.filter((role) => roleConfig[role.id]?.possible)
   const activeRoles = availableRoles.filter((role) => roleConfig[role.id]?.possible)
   const nightOrderEntries = nightOrder.flatMap((abilityId) => {
     const owners = activeRoles.filter((role) => role.abilities.some((ability) => ability.id === abilityId))
@@ -44,7 +46,10 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     return ability && owners.length ? [{ id: abilityId, name: capitaliseLabel(ability.name), roles: owners.map((role) => role.meta.name) }] : []
   })
   const exactDeck = activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, () => role.id))
-  const publicRoles: PublicRoleRange[] = activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max }))
+  const publicRoles: PublicRoleRange[] = [
+    ...activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max })),
+    ...possibleSpirits.map((role) => ({ roleId: role.id, min: 0, max: role.multiplicity.max })),
+  ]
   const setup: GameSetup = {
     scenarioId, packIds, players: players.map((player) => assignment === 'random' ? { ...player, lockedRoleId: undefined } : player), publicRoles, exactDeck, assignment, distributeRolesInApp,
     nightOrder: nightOrderEntries.map((entry) => entry.id), silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
@@ -56,12 +61,12 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   function togglePack(id: string) { setPackIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]) }
   function updatePlayer(id: string, patch: Partial<PlayerSetup>) { setPlayers((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item)) }
   function setPossible(roleId: string, value: boolean) {
-    const role = availableRoles.find((item) => item.id === roleId)
+    const role = [...availableRoles, ...spiritRoles].find((item) => item.id === roleId)
     if (!role) return
     setRoleConfig((current) => ({ ...current, [roleId]: { ...(current[roleId] ?? defaultRoleConfig(role)), possible: value } }))
   }
   function setAllPossible(value: boolean) {
-    setRoleConfig((current) => Object.fromEntries(availableRoles.map((role) => [role.id, { ...(current[role.id] ?? defaultRoleConfig(role)), possible: value }])))
+    setRoleConfig((current) => Object.fromEntries([...availableRoles, ...spiritRoles].map((role) => [role.id, { ...(current[role.id] ?? defaultRoleConfig(role)), possible: value }])))
   }
   function updateRole(roleId: string, key: keyof RoleConfig, value: number) {
     setRoleConfig((current) => {
@@ -124,6 +129,14 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
           </div> })}
         </div>
       </>}
+
+      {step === 2 && spiritRoles.length > 0 && <section className="spirit-options" aria-label="Possible Spirits">
+        <h3>Possible Spirits</h3><p className="muted">Choose which Spirits may be assigned after a death. They are not part of the starting deck.</p>
+        <div className="choice-grid">{spiritRoles.map((role) => <label className={`choice-card ${roleConfig[role.id]?.possible ? 'selected' : ''}`} key={role.id}>
+          <input type="checkbox" aria-label={`${role.meta.name} possible`} checked={roleConfig[role.id]?.possible ?? false} onChange={(event) => setPossible(role.id, event.target.checked)} />
+          <div><strong>{role.meta.name}</strong><p>{role.text.summary}</p></div>
+        </label>)}</div>
+      </section>}
 
       {step === 3 && <>
         <div className="section-title"><div><span className="section-number">04</span><div><h2>Deal and review</h2><p>Choose how roles are assigned, then review the night order.</p></div></div></div>
