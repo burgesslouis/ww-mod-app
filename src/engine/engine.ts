@@ -1073,6 +1073,7 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
 }
 
 export function applyToSession(session: GameSession, command: GameCommand): GameSession {
+  if (session.roleDeal && !session.roleDeal.finished) throw new Error('Finish distributing the roles before starting the game.')
   const current = session.snapshots[session.cursor].state
   const result = applyCommand(current, command)
   const snapshots: SessionSnapshot[] = [...session.snapshots.slice(0, session.cursor + 1), { state: result.state, command: clone(command) }]

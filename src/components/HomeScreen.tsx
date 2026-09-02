@@ -13,7 +13,7 @@ export default function HomeScreen({ onNew, onResume, onLibrary }: { onNew: () =
       <h1>Wherewolf moderator</h1>
       <p>Set up players and roles, then record votes and work through night actions and announcements.</p>
       <div className="home-actions">
-        {active && <button className="primary home-action" onClick={() => onResume(active)}><Clock3 /><span>Resume game</span><small>Day {currentState(active).cycle} · {currentState(active).players.filter((player) => player.alive).length} alive</small></button>}
+        {active && <button className="primary home-action" onClick={() => onResume(active)}><Clock3 /><span>Resume game</span><small>{active.roleDeal && !active.roleDeal.finished ? `Dealing roles · ${active.roleDeal.picks.length} / ${active.setup.players.length} ready` : `Day ${currentState(active).cycle} · ${currentState(active).players.filter((player) => player.alive).length} alive`}</small></button>}
         <button className={active ? 'secondary home-action' : 'primary home-action'} onClick={onNew}><Plus /><span>New game</span></button>
         <button className="secondary home-action" onClick={onLibrary}><BookOpen /><span>Roles and rules</span></button>
       </div>

@@ -11,6 +11,8 @@ import SetupWizard from './components/SetupWizard'
 import GameView from './components/GameView'
 import Library from './components/Library'
 import Editor from './components/Editor'
+import RoleDistribution from './components/RoleDistribution'
+import { createRoleDeal } from './engine/dealing'
 
 type Screen = 'home' | 'setup' | 'game' | 'library' | 'editor'
 const logoUrl = `${import.meta.env.BASE_URL}lantern-logo.png`
@@ -43,11 +45,12 @@ export default function App() {
     return [...catalogue.values()].sort((left, right) => left.label.localeCompare(right.label))
   }, [roles])
 
-  async function openSession(next: GameSession) { setSession(next); setScreen('game'); await saveSession(next) }
-  async function updateSession(next: GameSession) { setSession(next); await saveSession(next) }
+  async function openSession(next: GameSession) { await saveSession(next); setSession(next); setScreen('game') }
+  async function updateSession(next: GameSession) { await saveSession(next); setSession(next) }
   function openEditor(artifact: Artifact) { setEditArtifact(artifact); setScreen('editor') }
 
   if (!ready) return <div className="boot"><img src={logoUrl} alt="" /><p>Lighting the lantern…</p></div>
+  if (screen === 'game' && session?.roleDeal && !session.roleDeal.finished) return <RoleDistribution session={session} onChange={updateSession} />
 
   return (
     <div className={`app-shell app-screen-${screen}`}>
@@ -61,7 +64,7 @@ export default function App() {
 
       <main className={`main-content screen-${screen}`}>
         {screen === 'home' && <HomeScreen onNew={() => setScreen('setup')} onResume={openSession} onLibrary={() => setScreen('library')} />}
-        {screen === 'setup' && <SetupWizard roles={roles} packs={packs} scenarios={scenarios} onCancel={() => setScreen('home')} onStart={(setup) => openSession(createSession(setup, `${new Date().toLocaleDateString()} game`))} />}
+        {screen === 'setup' && <SetupWizard roles={roles} packs={packs} scenarios={scenarios} onCancel={() => setScreen('home')} onStart={(setup) => openSession((setup.distributeRolesInApp ? createRoleDeal : createSession)(setup, `${new Date().toLocaleDateString()} game`))} />}
         {screen === 'game' && session && <GameView session={session} roles={roles} onChange={updateSession} onExit={() => setScreen('home')} onUndo={() => updateSession(undo(session))} onRedo={() => updateSession(redo(session))} onCommand={(command) => updateSession(applyToSession(session, command))} />}
         {screen === 'library' && <Library artifacts={artifacts} roles={roles} packs={packs} scenarios={scenarios} traitCatalogue={traits} onRefresh={refreshArtifacts} onEdit={openEditor} />}
         {screen === 'editor' && editArtifact && <Editor artifact={editArtifact} traitCatalogue={traits} onSaved={async (artifact) => { await refreshArtifacts(); setEditArtifact(artifact) }} onClose={() => setScreen('library')} />}

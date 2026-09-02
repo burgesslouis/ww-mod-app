@@ -5,7 +5,7 @@ import { PACK_ID } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
 import { capitaliseLabel } from '../ui/labels'
 
-interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void }
+interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
 
 const player = (index: number): PlayerSetup => ({ id: crypto.randomUUID(), name: '' })
@@ -25,8 +25,10 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const [assignment, setAssignment] = useState<'random' | 'locked-random'>('random')
   const [nightOrder, setNightOrder] = useState<string[]>(scenario?.nightOrder ?? [])
   const [silentNight, setSilentNight] = useState(false)
+  const [distributeRolesInApp, setDistributeRolesInApp] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
   const [error, setError] = useState<string>('')
+  const [starting, setStarting] = useState(false)
 
   const selectedPacks = useMemo(() => packs.filter((pack) => packIds.includes(pack.id)), [packs, packIds])
   const selectedRoles = useMemo(() => {
@@ -44,7 +46,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const exactDeck = activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, () => role.id))
   const publicRoles: PublicRoleRange[] = activeRoles.map((role) => ({ roleId: role.id, min: roleConfig[role.id].min, max: roleConfig[role.id].max }))
   const setup: GameSetup = {
-    scenarioId, packIds, players, publicRoles, exactDeck, assignment,
+    scenarioId, packIds, players: players.map((player) => assignment === 'random' ? { ...player, lockedRoleId: undefined } : player), publicRoles, exactDeck, assignment, distributeRolesInApp,
     nightOrder: nightOrderEntries.map((entry) => entry.id), silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
   const validation = validateSetup(setup)
@@ -82,9 +84,12 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
     if (step === 1 && (players.length < 3 || players.some((item) => !item.name.trim()))) return setError('Enter a unique name for every player.')
     setError(''); setStep((current) => Math.min(3, current + 1))
   }
-  function start() {
+  async function start() {
+    if (starting) return
     if (!validation.valid) return setError(validation.issues.filter((issue) => issue.severity === 'error').map((issue) => issue.message).join(' '))
-    onStart(setup)
+    setStarting(true); setError('')
+    try { await onStart(setup) }
+    catch { setError('Could not save this game. Please try again.'); setStarting(false) }
   }
 
   return <div className="setup-page page-width">
@@ -122,6 +127,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
 
       {step === 3 && <>
         <div className="section-title"><div><span className="section-number">04</span><div><h2>Deal and review</h2><p>Choose how roles are assigned, then review the night order.</p></div></div></div>
+        <button type="button" aria-pressed={distributeRolesInApp} className={`choice-card deal-option ${distributeRolesInApp ? 'selected' : ''}`} onClick={() => setDistributeRolesInApp((value) => !value)}><span className="check-box">{distributeRolesInApp && <Check />}</span><div><strong>Use app to distribute roles</strong><p>Pass the phone around. Each player picks a card, reads their role and presses Ready.</p>{distributeRolesInApp && assignment === 'locked-random' && <p>Selected seats receive their assigned card. Other players draw from the remaining deck.</p>}</div></button>
         <div className="segmented"><button className={assignment === 'random' ? 'active' : ''} onClick={() => setAssignment('random')}><Shuffle /> Random allocation</button><button className={assignment === 'locked-random' ? 'active' : ''} onClick={() => setAssignment('locked-random')}><Leaf /> Gardened allocation</button></div>
         {assignment === 'locked-random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={item.lockedRoleId ?? ''} onChange={(event) => updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">Shuffle this seat</option>{activeRoles.flatMap((role) => Array.from({ length: roleConfig[role.id].exact }, (_, index) => <option key={`${role.id}-${index}`} value={role.id}>{role.meta.name}</option>))}</select></label>)}</div>}
         <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div><div><dt>Night calls</dt><dd>{silentNight ? 'Silent' : 'Read aloud'}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>
@@ -131,7 +137,7 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
       </>}
 
       {error && <div className="error-banner">{error}</div>}
-      <div className="wizard-actions"><button className="secondary" onClick={() => step === 0 ? onCancel() : setStep((current) => current - 1)}><ArrowLeft /> {step === 0 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary" onClick={nextStep}>Continue <ArrowRight /></button> : <button className="primary" onClick={start} disabled={!validation.valid}>Deal roles & begin <ArrowRight /></button>}</div>
+      <div className="wizard-actions"><button className="secondary" disabled={starting} onClick={() => step === 0 ? onCancel() : setStep((current) => current - 1)}><ArrowLeft /> {step === 0 ? 'Cancel' : 'Back'}</button>{step < 3 ? <button className="primary" onClick={nextStep}>Continue <ArrowRight /></button> : <button className="primary" onClick={start} disabled={!validation.valid || starting}>{starting ? 'Saving…' : distributeRolesInApp ? 'Distribute roles' : 'Deal roles & begin'} <ArrowRight /></button>}</div>
     </section>
 
     {showSummary && <div className="modal-backdrop" onMouseDown={() => setShowSummary(false)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setShowSummary(false)}><X /></button><span className="eyebrow">READ-ALOUD LIST</span><h2>Possible roles</h2><p className="muted">This shows only the ranges announced to the players.</p><div className="public-summary">{publicRoles.map((range) => { const role = roles.find((item) => item.id === range.roleId)!; return <article key={range.roleId}><header><strong>{role.meta.name}</strong><span>{range.min === range.max ? range.min : `${range.min}–${range.max}`}</span></header><p>{role.text.summary}</p></article> })}</div></div></div>}

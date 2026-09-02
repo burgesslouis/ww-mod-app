@@ -201,3 +201,64 @@ test('installed shell reloads while offline', async ({ page, context }) => {
   await expect(page.getByRole('heading', { name: /wherewolf moderator/i })).toBeVisible()
   await context.setOffline(false)
 })
+
+for (const gardened of [false, true]) {
+  test(`players pick and confirm cards ${gardened ? 'with Gardened seats' : 'at random, including offline resume'}`, async ({ page, context }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: /^new game$/i }).click()
+    await page.getByRole('button', { name: /continue/i }).click()
+    for (let count = 0; count < 3; count += 1) await page.locator('.player-row .danger').last().click()
+    const names = ['Alice', 'Bob', 'Charlie']
+    for (let index = 0; index < names.length; index += 1) await page.getByLabel(`Player ${index + 1} name`).fill(names[index])
+    await page.getByRole('button', { name: /continue/i }).click()
+    await page.getByRole('button', { name: /clear all/i }).click()
+    for (const name of ['Alpha Wolf', 'Clairvoyant', 'Witch']) {
+      const row = page.locator('.role-config-row').filter({ hasText: name })
+      await row.locator('.role-check').click()
+      await row.locator('.exact-checkbox').click()
+    }
+    await page.getByRole('button', { name: /continue/i }).click()
+    if (gardened) {
+      await page.getByRole('button', { name: /gardened allocation/i }).click()
+      await page.locator('.assignment-list select').nth(1).selectOption({ label: 'Witch' })
+    }
+    await page.getByRole('button', { name: /use app to distribute roles/i }).click()
+    await page.getByRole('button', { name: /^distribute roles$/i }).click()
+    await expect(page.locator('.deal-handoff h1')).toHaveText('Alice')
+    await expect(page.locator('.topbar, .bottom-nav, .secret-roster')).toHaveCount(0)
+    const drawn: string[] = []
+    for (let index = 0; index < names.length; index += 1) {
+      await expect(page.locator('.deal-handoff h1')).toHaveText(names[index])
+      await expect(page.locator('.deal-role-front')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Choose my card' }).click()
+      await expect(page.locator('.deal-card-back')).toHaveCount(gardened ? (index === 0 ? 2 : 1) : 3 - index)
+      await expect.poll(() => page.locator('.deal-card-back img').first().evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(await page.evaluate(() => window.innerWidth))
+      await page.locator('.deal-card-back').last().click()
+      await expect(page.locator('.deal-role-front h1')).toBeVisible()
+      drawn.push(await page.locator('.deal-role-front h1').innerText())
+      await expect(page.locator('.deal-card-back')).toHaveCount(0)
+      if (gardened && index === 1) expect(drawn[index]).toBe('Witch')
+      if (!gardened && index === 0) {
+        await page.evaluate(async () => { await navigator.serviceWorker.ready })
+        await context.setOffline(true)
+        await page.reload()
+        await page.getByRole('button', { name: /resume game/i }).click()
+        await expect(page.locator('.deal-role-front')).toHaveCount(0)
+        await expect(page.locator('.deal-handoff h1')).toHaveText('Alice')
+        await page.getByRole('button', { name: 'View my card' }).click()
+        await expect(page.locator('.deal-role-front h1')).toHaveText(drawn[0])
+        await expect.poll(() => page.locator('.deal-flip-back img').evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+      }
+      await page.getByRole('button', { name: /^ready$/i }).click()
+      await expect(page.locator('.deal-role-front')).toHaveCount(0)
+    }
+    expect([...drawn].sort()).toEqual(['Alpha Wolf', 'Clairvoyant', 'Witch'])
+    await expect(page.getByRole('heading', { name: 'All roles dealt' })).toBeVisible()
+    await expect(page.locator('.game-statusbar')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Begin game' }).click()
+    await expect(page.locator('.game-statusbar')).toContainText('N0')
+    expect(await page.locator('.roster-identity > div > span').allTextContents()).toEqual(drawn)
+    await context.setOffline(false)
+  })
+}

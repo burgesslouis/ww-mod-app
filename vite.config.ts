@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['lantern-logo.png'],
+      includeAssets: ['lantern-logo.png', 'role-card-back.png'],
       manifest: {
         name: 'Wherewolf Moderator',
         short_name: 'Wherewolf',

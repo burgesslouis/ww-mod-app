@@ -65,6 +65,14 @@ Open `http://localhost:4173/wherewolf-moderator/`. The normal `pnpm build` comma
 
 Open the Pages address in Chrome or Safari and use **Add to Home Screen**. Load the app once while online so its offline files are cached. Games and custom definitions are stored in that phone's browser database; publishing a new version does not upload or synchronize them.
 
+## Distribute roles on the phone
+
+In **Deal and review**, enable **Use app to distribute roles**. Pass the phone to each named player in order. They pick a face-down card, read its role description and press **Ready**. That card is removed before the next player takes a turn.
+
+Random allocation lets players draw from the shuffled deck. Gardened seats receive their reserved card; everyone else draws from the remaining deck. After everyone is ready, return the phone to the moderator and press **Begin game** to start N0 with those assignments.
+
+The dealing screen contains no moderator navigation, roster or previous cards. Progress is saved after each pick and confirmation; **Resume game** resumes an unfinished deal behind a handoff screen. The artwork and dealing flow work offline after the app has loaded online once.
+
 ## Validation
 
 ```powershell

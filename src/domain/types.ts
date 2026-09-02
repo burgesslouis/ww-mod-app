@@ -267,6 +267,7 @@ export interface GameSetup {
   hiddenState?: Record<string, Record<string, unknown>>
   nightOrder?: string[]
   silentNight?: boolean
+  distributeRolesInApp?: boolean
   seed: number
   rules?: { scenario: ScenarioDefinition; roles: RoleDefinition[] }
 }
@@ -379,6 +380,12 @@ export type PendingCommand =
   | { type: 'game-over'; title: string; winners: string[]; factions: string[] }
 
 export interface SessionSnapshot { state: GameState; command?: GameCommand }
+export interface RoleDeal {
+  cards: Array<{ id: string; roleId: string; reservedFor?: string }>
+  picks: Array<{ playerId: string; cardId: string; roleId: string }>
+  selectedCardId?: string
+  finished: boolean
+}
 export interface GameSession {
   id: string
   name: string
@@ -387,6 +394,7 @@ export interface GameSession {
   setup: GameSetup
   snapshots: SessionSnapshot[]
   cursor: number
+  roleDeal?: RoleDeal
 }
 
 export interface ApplyResult { state: GameState; events: GameEvent[]; trace: TraceEntry[] }
