@@ -268,6 +268,8 @@ export interface GameSetup {
   assignment: 'manual' | 'random' | 'locked-random'
   manualAssignments?: Record<string, string>
   hiddenState?: Record<string, Record<string, unknown>>
+  /** Prepared information, keyed by role ID and ability ID, independent of seat allocation. */
+  absentRoleSelections?: Record<string, Record<string, string[]>>
   nightOrder?: string[]
   silentNight?: boolean
   distributeRolesInApp?: boolean

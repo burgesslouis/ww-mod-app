@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Trattatello';
+  src: local('Trattatello');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #eee8dc; background: #141311; font-synthesis: none; text-rendering: optimizeLegibility;
@@ -67,6 +75,9 @@ p { line-height: 1.58; }
 .home-panel h1 { font-size: clamp(42px, 7vw, 64px); line-height: 1; margin-bottom: 18px; }
 .home-panel > p { max-width: 610px; color: var(--muted); font-size: 15px; margin-bottom: 32px; }
 .home-actions { display: grid; gap: 9px; max-width: 520px; }
+.app-update { display: grid; gap: 12px; max-width: 520px; margin-top: 22px; border: 1px solid var(--line); padding: 16px; background: var(--panel); }
+.app-update strong { font-size: 14px; }.app-update p { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.app-update button { justify-self: start; min-height: 44px; }.app-update [role="alert"] { color: var(--red); }
 .home-action { min-height: 56px; justify-content: flex-start; padding: 0 18px; }
 .home-action > span { font-weight: 700; }.home-action > small { margin-left: auto; font-size: 10px; font-weight: 500; opacity: .72; }
 
@@ -199,7 +210,7 @@ p { line-height: 1.58; }
 .history-actions { display: flex; gap: 3px; }
 .phase-card { border: 1px solid #40392f; background: linear-gradient(145deg, #201d19, #181613 65%); padding: clamp(22px, 5vw, 46px); box-shadow: 0 25px 70px #0007; position: relative; }
 .phase-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 2px; background: linear-gradient(transparent, var(--gold), transparent); }
-.phase-card h1 { font-size: clamp(35px, 6vw, 58px); margin: 13px 0 14px; line-height: 1; }
+.phase-card h1 { font-family: 'Trattatello', ui-sans-serif, system-ui, sans-serif; font-weight: 400; font-variant-numeric: lining-nums; font-size: clamp(35px, 6vw, 58px); margin: 13px 0 14px; line-height: 1.15; }
 .phase-instruction { color: #b3ab9e; max-width: 650px; font-size: 14px; }
 .wake-together { border: 1px solid #4d3d24; background: #241e16; padding: 13px 15px; margin: 19px 0 0; }
 .wake-together > span { display: block; color: var(--gold); letter-spacing: .15em; font-size: 8px; margin-bottom: 9px; }
@@ -307,6 +318,15 @@ p { line-height: 1.58; }
 @keyframes deal-turn { from { transform: rotateY(180deg); } to { transform: rotateY(0); } }
 @media (prefers-reduced-motion: reduce) { .deal-flipper { animation: none; }.deal-card-back { transition: none; } }
 .mobile-only { display: none; }
+.setup-information { margin: 24px 0; }
+.setup-information fieldset { min-width: 0; margin: 16px 0; padding: 16px; border: 1px solid var(--line); }
+.setup-information legend { padding: 0 6px; color: var(--gold); }
+.setup-information p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.prepared-role-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
+.prepared-role-options label { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px; border: 1px solid var(--line); cursor: pointer; }
+.prepared-role-options label.selected { border-color: var(--gold-dark); background: #302719; }
+.prepared-role-options input { flex-shrink: 0; width: 18px; height: 18px; accent-color: var(--gold); }
+.prepared-role-options span { overflow-wrap: anywhere; }
 
 @media (max-width: 900px) {
   .role-library-grid { grid-template-columns: repeat(2, 1fr); }

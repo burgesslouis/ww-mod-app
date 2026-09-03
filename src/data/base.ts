@@ -110,7 +110,7 @@ const roles: RoleDefinition[] = [
       { id: `${ROLE.farmer}.hero`, name: 'Hero Farmer', kind: 'passive', trigger: 'attack.resolving', condition: { op: 'all', conditions: [{ op: 'targetIsSelf' }, { op: 'state', key: 'latent', compare: 'eq', value: 'hero_farmer' }] }, effects: [{ type: 'kill', targets: { kind: 'highestRoleOrder', trait: TRAIT.werewolf, life: 'alive' }, cause: 'Hero Farmer' }] },
     ], [{ key: 'latent', label: 'Latent state', type: 'choice', initial: 'ordinary', hidden: true, editableUntil: 'attack.resolving', choices: ['ordinary', 'wolf_descendant', 'hero_farmer'] }], ['hidden-setup-state'], 3),
   withRoleConstants(role(ROLE.monk, 'Monk', FACTION.village, ['Information', 'Setup'], [],
-    'Learns at least two publicly possible roles that are absent.', 'On setup, the moderator chooses roles from the public possible list whose actual count is zero. The app validates the minimum.', [
+    'Learns at least two publicly possible roles that are absent.', 'Before dealing, the moderator chooses at least two publicly possible roles that are not in the deck. On Night 0, the Monk is told those roles.', [
       { id: `${ROLE.monk}.reveal`, name: 'Absent roles', kind: 'active', trigger: 'setup.action', order: 30, effects: [{ type: 'learnRolesAbsent', minimum: { constant: 'minimumAbsentRoles' } }], callout: 'learn which possible roles are absent', instructions: 'Choose absent roles to reveal privately to the Monk.', requires: ['public-role-ranges', 'private-information'], dependencyBarrier: 'setup-information' },
     ]), [{ key: 'minimumAbsentRoles', label: 'Minimum absent roles', type: 'number', default: 2, min: 1, max: 12, scenarioOverridable: true }]),
   role(ROLE.priest, 'Priest', FACTION.village, ['Information', 'Setup'], [],

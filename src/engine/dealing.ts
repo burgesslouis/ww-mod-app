@@ -53,7 +53,7 @@ export function finishRoleDeal(session: GameSession): GameSession {
   const setup: GameSetup = { ...session.setup, assignment: 'manual', manualAssignments: Object.fromEntries(deal.picks.map((pick) => [pick.playerId, pick.roleId])) }
   // Start N0 with the choices actually made, including role-specific initial state.
   // The original deal is retained on the session for resume and audit.
-  const state = createInitialState(setup)
+  const state = createInitialState(setup, { resumeLegacyDeal: session.setup.absentRoleSelections === undefined && currentState(session).setup.absentRoleSelections === undefined })
   state.id = session.id
   state.trace.push({ id: 'role-deal', source: 'Role distribution', message: 'Each player read and confirmed their role on this device.' })
   return { ...session, setup, updatedAt: new Date().toISOString(), snapshots: [{ state }], roleDeal: { ...deal, finished: true } }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { BookOpen, ChevronLeft, Home as HomeIcon, Moon, Plus } from 'lucide-react'
 import { BASE_PACK, BASE_ROLES } from './data/base'
 import { DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK, OFFICIAL_SCENARIO } from './data/expansions'
@@ -13,12 +13,14 @@ import Library from './components/Library'
 import Editor from './components/Editor'
 import RoleDistribution from './components/RoleDistribution'
 import { createRoleDeal } from './engine/dealing'
+import { appUpdater, type AppUpdater } from './pwa/updates'
 
 type Screen = 'home' | 'setup' | 'game' | 'library' | 'editor'
 const logoUrl = `${import.meta.env.BASE_URL}lantern-logo.png`
 type Artifact = RoleDefinition | PackDefinition | ScenarioDefinition
 
-export default function App() {
+export default function App({ updater = appUpdater }: { updater?: AppUpdater }) {
+  const update = useSyncExternalStore(updater.subscribe, updater.getSnapshot)
   const [screen, setScreen] = useState<Screen>('home')
   const [session, setSession] = useState<GameSession | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
@@ -55,15 +57,15 @@ export default function App() {
   return (
     <div className={`app-shell app-screen-${screen}`}>
       <header className="topbar">
-        <button className="brand" onClick={() => setScreen('home')} aria-label="Wherewolf home">
+        <button className="brand" disabled={update.applying} onClick={() => setScreen('home')} aria-label="Wherewolf home">
           <img src={logoUrl} alt="" /><span>WHEREWOLF</span><small>MODERATOR</small>
         </button>
-        {screen !== 'home' && <button className="icon-button desktop-back" onClick={() => setScreen(screen === 'editor' ? 'library' : 'home')}><ChevronLeft size={18} /> Back</button>}
+        {screen !== 'home' && <button className="icon-button desktop-back" disabled={update.applying} onClick={() => setScreen(screen === 'editor' ? 'library' : 'home')}><ChevronLeft size={18} /> Back</button>}
         <div className="offline-pill"><span /> Offline ready</div>
       </header>
 
       <main className={`main-content screen-${screen}`}>
-        {screen === 'home' && <HomeScreen onNew={() => setScreen('setup')} onResume={openSession} onLibrary={() => setScreen('library')} />}
+        {screen === 'home' && <HomeScreen onNew={() => setScreen('setup')} onResume={openSession} onLibrary={() => setScreen('library')} update={update} onUpdate={updater.apply} />}
         {screen === 'setup' && <SetupWizard roles={roles} packs={packs} scenarios={scenarios} onCancel={() => setScreen('home')} onStart={(setup) => openSession((setup.distributeRolesInApp ? createRoleDeal : createSession)(setup, `${new Date().toLocaleDateString()} game`))} />}
         {screen === 'game' && session && <GameView session={session} roles={roles} onChange={updateSession} onExit={() => setScreen('home')} onUndo={() => updateSession(undo(session))} onRedo={() => updateSession(redo(session))} onCommand={(command) => updateSession(applyToSession(session, command))} />}
         {screen === 'library' && <Library artifacts={artifacts} roles={roles} packs={packs} scenarios={scenarios} traitCatalogue={traits} onRefresh={refreshArtifacts} onEdit={openEditor} />}
@@ -71,10 +73,10 @@ export default function App() {
       </main>
 
       <nav className="bottom-nav" aria-label="Primary navigation">
-        <button className={screen === 'home' ? 'active' : ''} onClick={() => setScreen('home')}><HomeIcon /><span>Home</span></button>
-        <button className={screen === 'game' ? 'active' : ''} disabled={!session} onClick={() => session && setScreen('game')}><Moon /><span>Game</span></button>
-        <button className={screen === 'setup' ? 'active' : ''} onClick={() => setScreen('setup')}><Plus /><span>New</span></button>
-        <button className={screen === 'library' || screen === 'editor' ? 'active' : ''} onClick={() => setScreen('library')}><BookOpen /><span>Rules</span></button>
+        <button className={screen === 'home' ? 'active' : ''} disabled={update.applying} onClick={() => setScreen('home')}><HomeIcon /><span>Home</span></button>
+        <button className={screen === 'game' ? 'active' : ''} disabled={!session || update.applying} onClick={() => session && setScreen('game')}><Moon /><span>Game</span></button>
+        <button className={screen === 'setup' ? 'active' : ''} disabled={update.applying} onClick={() => setScreen('setup')}><Plus /><span>New</span></button>
+        <button className={screen === 'library' || screen === 'editor' ? 'active' : ''} disabled={update.applying} onClick={() => setScreen('library')}><BookOpen /><span>Rules</span></button>
       </nav>
     </div>
   )

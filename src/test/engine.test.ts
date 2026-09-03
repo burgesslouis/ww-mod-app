@@ -82,12 +82,13 @@ describe('Setup validation and deterministic history', () => {
     expect(availableCommand(state)).toMatchObject({ type: 'advance', title: 'Day 1 discussion', actionLabel: 'Begin first vote' })
   })
 
-  it('lets the Monk choose more than the minimum absent roles', () => {
+  it('shows the Monk more than the minimum absent roles prepared before play', () => {
     const setup = setupFor([ROLE.monk, ROLE.farmer, ROLE.alphaWolf])
     setup.publicRoles.push({ roleId: ROLE.bard, min: 0, max: 1 }, { roleId: ROLE.innkeeper, min: 0, max: 1 }, { roleId: ROLE.hermit, min: 0, max: 1 })
+    setup.absentRoleSelections = { [ROLE.monk]: { [`${ROLE.monk}.reveal`]: [ROLE.bard, ROLE.innkeeper, ROLE.hermit] } }
     const pending = availableCommand(createInitialState(setup))
     expect(pending.type).toBe('choose')
-    expect(pending.type === 'choose' && [pending.min, pending.max]).toEqual([2, 3])
+    expect(pending).toMatchObject({ min: 0, max: 0, candidates: [], information: [{ label: 'Absent roles', value: 'Bard, Innkeeper, and Hermit' }] })
   })
 
   it('replays assignment from the stored random state and supports undo/redo', () => {

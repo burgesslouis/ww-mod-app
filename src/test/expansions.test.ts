@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { absentRoleCandidates } from '../engine/setupInformation'
 import { BASE_PACK } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { DARKEST_PACK_ID, DARKEST_ROLE as D, FACTION, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
@@ -142,9 +143,11 @@ describe('Official expansion defaults', () => {
     expect(validateSetup(officialSetup([H.ghost, ROLE.farmer, ROLE.alphaWolf])).issues).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'exactDeck.0', message: expect.stringContaining('cannot be dealt') })]))
     const deck = [ROLE.monk, ROLE.alphaWolf, ROLE.farmer]
     const setup = officialSetup(deck, [...deck, ROLE.witch, ROLE.wizard, H.ghost])
+    expect(absentRoleCandidates(setup, allRoles)).toEqual([ROLE.witch, ROLE.wizard])
+    setup.absentRoleSelections = { [ROLE.monk]: { [`${ROLE.monk}.reveal`]: [ROLE.witch, ROLE.wizard] } }
     setup.silentNight = true
     const state = createInitialState(setup)
-    expect(availableCommand(state)).toMatchObject({ type: 'choose', candidates: [ROLE.witch, ROLE.wizard] })
+    expect(availableCommand(state)).toMatchObject({ type: 'choose', candidates: [], information: [{ value: 'Witch and Wizard' }] })
     const amnesiac = createInitialState(officialSetup([D.amnesiac, ROLE.alphaWolf, ROLE.farmer], [D.amnesiac, ROLE.alphaWolf, ROLE.farmer, H.ghost]))
     amnesiac.pipeline = 'cycle'; amnesiac.cycle = 1; amnesiac.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); amnesiac.phaseId = 'official.night.actions'
     const pending = availableCommand(amnesiac)

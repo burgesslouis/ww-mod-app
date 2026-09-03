@@ -2,6 +2,7 @@ import { BASE_ROLES, BASE_SCENARIO, roleName } from '../data/base'
 import { DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { FACTION, TRAIT } from '../domain/ids'
 import { friendlyFactionLabel, technicalLabel } from '../ui/labels'
+import { absentRoleCandidates, absentRoleRequirements } from './setupInformation'
 import type {
   AbilityDefinition, ApplyResult, Condition, Effect, GameCommand, GameEvent, GameSession, GameSetup,
   EffectiveProperty, FactionDefinition, GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
@@ -130,6 +131,15 @@ export function validateSetup(setup: GameSetup): ValidationResult {
     if (!constant?.scenarioOverridable) issue(issues, `roleOverrides.${roleId}.${key}`, `${scenario.meta.name} may not override undeclared or fixed value “${key}”.`)
   }))
   const order = setup.nightOrder ?? scenario.nightOrder
+  const absentCandidates = new Set(absentRoleCandidates(setup, roles))
+  absentRoleRequirements(setup, roles, scenario).forEach(requirement => {
+    const selected = setup.absentRoleSelections?.[requirement.roleId]?.[requirement.abilityId] ?? []
+    const path = `absentRoleSelections.${requirement.roleId}.${requirement.abilityId}`
+    if (!Number.isInteger(requirement.minimum) || requirement.minimum < 1) issue(issues, path, `${requirement.roleName} needs a positive whole-number minimum for absent roles.`)
+    else if (absentCandidates.size < requirement.minimum) issue(issues, path, `${requirement.roleName} needs at least ${requirement.minimum} possible roles that are not in the deck. Add more possible roles or change the deck.`)
+    else if (selected.length < requirement.minimum) issue(issues, path, `Choose at least ${requirement.minimum} absent roles for ${requirement.roleName} before starting.`)
+    if (new Set(selected).size !== selected.length || selected.some(id => !absentCandidates.has(id))) issue(issues, path, `${requirement.roleName}'s information must contain distinct possible roles that are not in the deck. Status roles cannot be selected.`)
+  })
   const positions = new Map(order.map((id, index) => [id, index]))
   scenario.dependencyBarriers.forEach((barrier) => {
     const before = positions.get(barrier.before), after = positions.get(barrier.after)
@@ -172,9 +182,12 @@ function assignPlayers(setup: GameSetup, random: GameState['random']): PlayerSta
   })
 }
 
-export function createInitialState(setup: GameSetup): GameState {
+export function createInitialState(setup: GameSetup, options: { resumeLegacyDeal?: boolean } = {}): GameState {
   const validation = validateSetup(setup)
-  if (!validation.valid) throw new Error(validation.issues.map((entry) => entry.message).join('\n'))
+  // A deal saved before prepared information existed must retain its original N0 choice.
+  const issues = options.resumeLegacyDeal && setup.absentRoleSelections === undefined
+    ? validation.issues.filter(entry => !entry.path.startsWith('absentRoleSelections.')) : validation.issues
+  if (issues.some(entry => entry.severity === 'error')) throw new Error(issues.map(entry => entry.message).join('\n'))
   const random = { seed: setup.seed >>> 0, value: (setup.seed || 0x9e3779b9) >>> 0, draws: 0 }
   const rules = rulesFor(setup)
   const state: GameState = {
@@ -421,7 +434,9 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     }
     case 'learnRolesAbsent': {
       const names = context.chosen.map((id) => state.rules.roles.find((role) => role.id === id)?.meta.name ?? id)
-      state.pendingAnnouncements.push({ message: `Absent roles: ${names.join(', ')}`, category: 'Private result', visibility: 'moderator' }); return `learned absent roles: ${names.join(', ')}`
+      // Prepared information is displayed alongside the wake-up instruction.
+      if (!context.event.data?.preparedInformation) state.pendingAnnouncements.push({ message: `Absent roles: ${names.join(', ')}`, category: 'Private result', visibility: 'moderator' })
+      return `learned absent roles: ${names.join(', ')}`
     }
     case 'learnRoleIdentity': {
       const matches = state.players.filter((player) => player.roleId === effect.roleId).map((player) => player.name)
@@ -557,8 +572,7 @@ function dispatch(state: GameState, trigger: AbilityDefinition['trigger'], conte
 
 function targetCandidates(state: GameState, actor: PlayerState, ability: AbilityDefinition): string[] {
   if (ability.effects.some((effect) => effect.type === 'learnRolesAbsent')) {
-    const counts = new Map<string, number>(); state.setup.exactDeck.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1))
-    return state.setup.publicRoles.filter((range) => range.max > 0 && (counts.get(range.roleId) ?? 0) === 0 && !state.rules.roles.find((role) => role.id === range.roleId)?.categories.includes('Status')).map((range) => range.roleId)
+    return absentRoleCandidates(state.setup, state.rules.roles)
   }
   if (ability.effects.some((effect) => effect.type === 'revive')) return (state.facts.nightDeaths as string[] | undefined) ?? []
   if (!ability.target) return []
@@ -568,6 +582,12 @@ function targetCandidates(state: GameState, actor: PlayerState, ability: Ability
   if (ability.target.excludeSelf) candidates = candidates.filter((id) => id !== actor.id)
   if (ability.target.excludeTraits?.length) candidates = candidates.filter((id) => !ability.target!.excludeTraits!.some((trait) => hasTrait(state, id, trait)))
   return candidates
+}
+
+function preparedAbsentRoles(state: GameState, actor: PlayerState, ability: AbilityDefinition) {
+  if (ability.trigger !== 'setup.action' || ability.kind !== 'active' || !ability.effects.some(effect => effect.type === 'learnRolesAbsent')) return undefined
+  // Older saved games have no prepared choice and retain their existing night-time selection.
+  return state.setup.absentRoleSelections?.[actor.roleId]?.[ability.id]
 }
 
 function actionKey(state: GameState, actorId: string, abilityId: string): string { return `${state.pipeline}:${state.cycle}:${state.phaseId}:${actorId}:${abilityId}` }
@@ -716,23 +736,26 @@ export function availableCommand(state: GameState): PendingCommand {
       return { type: 'advance', title: `Call ${callName}`, description: `Say “${readAloudCall(callName, next.ability)}” Wait briefly, then continue.`, actionLabel: 'Continue night order' }
     }
     const actor = next.actor!
-    const candidates = targetCandidates(state, actor, next.ability)
+    const prepared = preparedAbsentRoles(state, actor, next.ability)
+    const candidates = prepared ? [] : targetCandidates(state, actor, next.ability)
     const absentEffect = next.ability.effects.find((effect) => effect.type === 'learnRolesAbsent')
-    const minimum = absentEffect?.type === 'learnRolesAbsent' ? (typeof absentEffect.minimum === 'object' ? Number(constantValue(state, actor.id, absentEffect.minimum.constant)) : absentEffect.minimum) : next.ability.target?.min ?? 0
+    const minimum = prepared ? 0 : absentEffect?.type === 'learnRolesAbsent' ? (typeof absentEffect.minimum === 'object' ? Number(constantValue(state, actor.id, absentEffect.minimum.constant)) : absentEffect.minimum) : next.ability.target?.min ?? 0
     const maxFromStatus = actor.statuses.map((status) => Number(status.data?.maxTargets ?? 0)).reduce((a, b) => Math.max(a, b), 0)
-    const maximum = absentEffect?.type === 'learnRolesAbsent' ? candidates.length : Math.max(next.ability.target?.max ?? minimum, maxFromStatus)
+    const maximum = prepared ? 0 : absentEffect?.type === 'learnRolesAbsent' ? candidates.length : Math.max(next.ability.target?.max ?? minimum, maxFromStatus)
     const simultaneous = [...new Map(simultaneousActions(state, next.ability).map(({ actor }) => [actor.id, actor])).values()]
     const participants = simultaneous.length ? simultaneous : state.setup.silentNight ? [actor] : []
     const information = next.ability.effects.flatMap((effect) => {
+      if (effect.type === 'learnRolesAbsent' && prepared) return [{ label: 'Absent roles', value: formatList(prepared.map(id => state.rules.roles.find(role => role.id === id)?.meta.name ?? id)), status: 'not-in-play' as const }]
       if (effect.type !== 'learnRoleIdentity') return []
       const definition = state.rules.roles.find((role) => role.id === effect.roleId)
       const matches = state.players.filter((player) => player.roleId === effect.roleId).map((player) => player.name)
       return [{ label: definition?.meta.name ?? effect.roleId.split('.').at(-1) ?? effect.roleId, value: matches.join(', ') || 'Not in play', status: matches.length ? 'in-play' as const : 'not-in-play' as const }]
     })
     const callName = next.ability.simultaneous?.label ?? next.role.meta.name
+    const actionInstructions = prepared ? 'Tell this player the absent roles shown below, then let them go back to sleep.' : moderatorInstructions(next.ability)
     const instructions = state.setup.silentNight
-      ? `Wake ${formatList(participants.map((participant) => participant.name))}${participants.length > 1 ? ' together' : ''}. ${moderatorInstructions(next.ability)}`
-      : `Say “${readAloudCall(callName, next.ability)}” ${moderatorInstructions(next.ability)}`
+      ? `Wake ${formatList(participants.map((participant) => participant.name))}${participants.length > 1 ? ' together' : ''}. ${actionInstructions}`
+      : `Say “${readAloudCall(callName, next.ability)}” ${actionInstructions}`
     const actionName = displayActionName(next.ability.name)
     return { type: 'choose', actorId: actor.id, abilityId: next.ability.id, title: next.ability.simultaneous ? `${next.ability.simultaneous.label} · ${actionName}` : `${actor.name} · ${actionName}`, instructions, candidates, min: minimum, max: maximum, allowNone: next.ability.target?.allowNone ?? minimum === 0, participantIds: participants.length ? participants.map((participant) => participant.id) : undefined, information: information.length ? information : undefined }
   }
@@ -1039,7 +1062,7 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
   else if (command.type === 'choose') {
     const pending = availableCommand(state)
     if (pending.type !== 'choose' || pending.actorId !== command.actorId || pending.abilityId !== command.abilityId) throw new Error('That action is no longer current.')
-    const unique = [...new Set(command.targets)]
+    let unique = [...new Set(command.targets)]
     if (unique.length < pending.min || unique.length > pending.max || unique.some((target) => !pending.candidates.includes(target))) throw new Error(`Choose ${pending.min}–${pending.max} legal target(s).`)
     if (command.abilityId === ASSIGN_SPIRIT_ABILITY) {
       const player = state.players.find((item) => item.id === command.actorId)
@@ -1061,11 +1084,13 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
       ?? actor.statuses.flatMap((status) => status.abilities ?? []).find((entry) => entry.id === command.abilityId)
       ?? state.rules.roles.flatMap((role) => role.abilities).find((entry) => entry.id === command.abilityId)
     if (!ability) throw new Error('Ability definition is unavailable.')
+    const prepared = preparedAbsentRoles(state, actor, ability)
+    if (prepared) unique = [...prepared]
     const groupedActions = ability.simultaneous ? simultaneousActions(state, ability) : []
     const participants = [...new Map(groupedActions.map(({ actor: participant }) => [participant.id, participant])).values()]
     const sourceLabel = ability.simultaneous?.label ?? actor.name
     const skipped = Boolean(ability.target && ability.target.min === 0 && ability.target.max > 0 && unique.length === 0)
-    const event = emit(state, ability.trigger, `${sourceLabel} ${skipped ? 'skipped' : 'resolved'} ${ability.name}.`, 'moderator', { actorId: actor.id, targets: unique, targetId: unique[0], data: { abilityId: ability.id, skipped, abilityIds: groupedActions.map(({ ability: groupedAbility }) => groupedAbility.id), participantIds: participants.map((participant) => participant.id) } })
+    const event = emit(state, ability.trigger, `${sourceLabel} ${skipped ? 'skipped' : 'resolved'} ${ability.name}.`, 'moderator', { actorId: actor.id, targets: unique, targetId: unique[0], data: { abilityId: ability.id, skipped, preparedInformation: Boolean(prepared), abilityIds: groupedActions.map(({ ability: groupedAbility }) => groupedAbility.id), participantIds: participants.map((participant) => participant.id) } })
     if (!skipped) dispatch(state, ability.trigger, { event, chosen: unique, prevented: false })
     const announcementStart = state.pendingAnnouncements.length
     const actionsToExecute = groupedActions.length ? groupedActions : [{ actor, ability }]
@@ -1085,7 +1110,7 @@ export function applyCommand(input: GameState, command: GameCommand): ApplyResul
       const key = actionKey(state, participant.id, completedAbility.id)
       if (!state.completedActions.includes(key)) state.completedActions.push(key)
     })
-    const resolution = skipped ? 'Skipped; the power remains available.' : unique.length ? `Targets: ${unique.map((id) => playerLabel(state, id)).join(', ')}.` : participants.length ? `Participants: ${participants.map((participant) => participant.name).join(', ')}.` : 'No target selected.'
+    const resolution = prepared ? `Shared prepared information: ${formatList(prepared.map(id => state.rules.roles.find(role => role.id === id)?.meta.name ?? id))}.` : skipped ? 'Skipped; the power remains available.' : unique.length ? `Targets: ${unique.map((id) => playerLabel(state, id)).join(', ')}.` : participants.length ? `Participants: ${participants.map((participant) => participant.name).join(', ')}.` : 'No target selected.'
     trace(state, `${sourceLabel} · ${ability.name}`, resolution, [...new Set(effects)], event.id)
     settleAutomaticPhases(state)
     }
@@ -1123,13 +1148,20 @@ export function runRoleTestBench(role: RoleDefinition, trigger: AbilityDefinitio
     manualAssignments: { author: role.id, target: 'wherewolf.base.role.farmer', wolf: 'wherewolf.base.role.alpha-wolf' },
     rules: { scenario: clone(BASE_SCENARIO), roles: testRoles },
   }
+  // Supply explicit mock information for roles whose information is prepared before play.
+  setup.publicRoles.push(...testRoles.filter(entry => !testDeck.includes(entry.id) && !entry.categories.includes('Status')).map(entry => ({ roleId: entry.id, min: 0, max: 1 })))
+  setup.absentRoleSelections = {}
+  for (const requirement of absentRoleRequirements(setup, testRoles, setup.rules!.scenario)) {
+    (setup.absentRoleSelections[requirement.roleId] ??= {})[requirement.abilityId] = absentRoleCandidates(setup, testRoles).slice(0, requirement.minimum)
+  }
   const state = createInitialState(setup)
   state.events = []; state.trace = []; state.cycle = 1; state.phaseId = 'test-bench'
   const event = emit(state, trigger, `Fired ${trigger} in the author test bench.`, 'moderator', { actorId: 'wolf', targetId: 'author', data: { attackType: 'shadow', cause: 'shadow', voteKind: 'ballot', raw: 3 } })
   const context: EventContext = { event, ownerId: 'author', chosen: ['target'], prevented: false, voteValue: 3, ballot: ['author', 'target'] }
   role.abilities.filter((ability) => ability.trigger === trigger).forEach((ability) => {
     if (!conditionMatches(state, ability.condition, context)) { trace(state, `${role.meta.name} · ${ability.name}`, 'Condition did not match the mock event.'); return }
-    const effects = ability.effects.map((effect) => applyEffect(state, effect, context))
+    const prepared = setup.absentRoleSelections?.[role.id]?.[ability.id]
+    const effects = ability.effects.map((effect) => applyEffect(state, effect, prepared ? { ...context, chosen: prepared } : context))
     trace(state, `${role.meta.name} · ${ability.name}`, 'Condition matched.', effects, event.id)
   })
   return { state, events: state.events, trace: state.trace }

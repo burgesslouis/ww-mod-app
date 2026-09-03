@@ -5,6 +5,7 @@ import { PACK_ID, TRAIT } from '../domain/ids'
 import { validateSetup } from '../engine/engine'
 import { capitaliseLabel, displayActionLabel, moderatorTraits, roleTeamLabel } from '../ui/labels'
 import { reconcileGardenedSeats } from '../ui/setup'
+import { absentRoleCandidates, absentRoleRequirements, reconcileAbsentRoleSelections } from '../engine/setupInformation'
 
 interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
@@ -31,6 +32,8 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   const [error, setError] = useState<string>('')
   const [starting, setStarting] = useState(false)
   const [allocationNotice, setAllocationNotice] = useState('')
+  const [absentRoleSelections, setAbsentRoleSelections] = useState<NonNullable<GameSetup['absentRoleSelections']>>({})
+  const [informationNotice, setInformationNotice] = useState('')
 
   const selectedPacks = useMemo(() => packs.filter((pack) => packIds.includes(pack.id)), [packs, packIds])
   const selectedRoles = useMemo(() => {
@@ -55,11 +58,22 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
   ]
   const setup: GameSetup = {
     scenarioId, packIds, players: gardenedPlayers.map((player) => assignment === 'random' ? { ...player, lockedRoleId: undefined } : player), publicRoles, exactDeck, assignment, distributeRolesInApp,
-    nightOrder: nightOrderEntries.map((entry) => entry.id), silentNight, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
+    nightOrder: nightOrderEntries.map((entry) => entry.id), silentNight, absentRoleSelections, seed: Math.floor(Date.now() % 0xffffffff), rules: { scenario, roles: selectedRoles },
   }
+  const informationRequirements = absentRoleRequirements(setup, selectedRoles, scenario)
+  const informationCandidates = absentRoleCandidates(setup, selectedRoles)
+  const reconciledInformation = reconcileAbsentRoleSelections(setup, selectedRoles, scenario)
+  setup.absentRoleSelections = reconciledInformation
+  const informationChanged = JSON.stringify(reconciledInformation) !== JSON.stringify(absentRoleSelections)
   const validation = validateSetup(setup)
 
   useEffect(() => { window.scrollTo({ top: 0 }) }, [step])
+  useEffect(() => {
+    if (informationChanged) {
+      setAbsentRoleSelections(reconciledInformation)
+      setInformationNotice('The roles changed. Choices that are no longer eligible have been removed. Review the information before starting.')
+    }
+  }, [informationChanged, reconciledInformation])
   useEffect(() => {
     if (gardenedPlayers !== players) {
       setPlayers(gardenedPlayers)
@@ -155,6 +169,26 @@ export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart
         {allocationNotice && <p className="allocation-notice" role="status">{allocationNotice}</p>}
         <div className="segmented"><button className={assignment === 'random' ? 'active' : ''} onClick={() => setAssignment('random')}><Shuffle /> Random allocation</button><button className={assignment === 'locked-random' ? 'active' : ''} onClick={() => setAssignment('locked-random')}><Leaf /> Gardened allocation</button></div>
         {assignment === 'locked-random' && <div className="assignment-list">{players.map((item) => <label key={item.id}><span>{item.name}</span><select value={item.lockedRoleId ?? ''} onChange={(event) => updatePlayer(item.id, { lockedRoleId: event.target.value || undefined })}><option value="">Shuffle this seat</option>{activeRoles.filter((role) => roleConfig[role.id].exact > 0).map((role) => { const usedElsewhere = players.filter((player) => player.id !== item.id && player.lockedRoleId === role.id).length; const unavailable = usedElsewhere >= roleConfig[role.id].exact && item.lockedRoleId !== role.id; return <option key={role.id} value={role.id} disabled={unavailable}>{role.meta.name}</option> })}</select></label>)}</div>}
+        {informationRequirements.length > 0 && <section className="setup-information" aria-label="Role information">
+          <h3>Role information</h3>
+          {informationNotice && <p role="status" className="allocation-notice">{informationNotice}</p>}
+          {informationRequirements.map(requirement => {
+            const selected = reconciledInformation[requirement.roleId]?.[requirement.abilityId] ?? []
+            return <fieldset key={`${requirement.roleId}:${requirement.abilityId}`}>
+              <legend>{requirement.roleName} · {requirement.abilityName}</legend>
+              <p>Choose at least {requirement.minimum} possible roles that are not in the deck. Tell the player these roles on Night 0.</p>
+              <div className="prepared-role-options">{informationCandidates.map(id => {
+                const name = selectedRoles.find(role => role.id === id)!.meta.name
+                return <label key={id} className={selected.includes(id) ? 'selected' : ''}>
+                  <input type="checkbox" checked={selected.includes(id)} aria-label={`${requirement.roleName}: reveal ${name}`} onChange={() => setAbsentRoleSelections(current => ({ ...current, [requirement.roleId]: { ...current[requirement.roleId], [requirement.abilityId]: selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id] } }))} />
+                  <span>{name}</span>
+                </label>
+              })}</div>
+              <p aria-live="polite">{selected.length} selected · minimum {requirement.minimum}</p>
+              {informationCandidates.length < requirement.minimum && <p className="error-banner">Not enough absent roles. Go back and add more possible roles, or change the deck.</p>}
+            </fieldset>
+          })}
+        </section>}
         <div className="review-grid"><div><h3>Game summary</h3><dl><div><dt>Scenario</dt><dd>{scenario.meta.name}</dd></div><div><dt>Players</dt><dd>{players.length}</dd></div><div><dt>Possible roles</dt><dd>{publicRoles.length}</dd></div><div><dt>Roles in play</dt><dd>{exactDeck.length}</dd></div><div><dt>Night calls</dt><dd>{silentNight ? 'Silent' : 'Read aloud'}</dd></div></dl><button className="secondary" onClick={() => setShowSummary(true)}><Eye /> Preview read-aloud summary</button></div>
           <div><h3>Night order</h3><p className="muted">Actions for possible roles are shown in this order.</p><div className="night-order">{nightOrderEntries.map((entry, index) => <div key={entry.id}><span>{index + 1}</span><div className="night-action-label"><strong>{entry.name}</strong><div className="night-role-tags">{entry.roles.map((role) => <span key={role}>{role}</span>)}</div></div><button disabled={index === 0} onClick={() => moveNight(entry.id, -1)}><ChevronUp /></button><button disabled={index === nightOrderEntries.length - 1} onClick={() => moveNight(entry.id, 1)}><ChevronDown /></button></div>)}</div></div>
         </div>
