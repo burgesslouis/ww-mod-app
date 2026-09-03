@@ -65,6 +65,14 @@ Open `http://localhost:4173/wherewolf-moderator/`. The normal `pnpm build` comma
 
 Open the Pages address in Chrome or Safari and use **Add to Home Screen**. Load the app once while online so its offline files are cached. Games and custom definitions are stored in that phone's browser database; publishing a new version does not upload or synchronize them.
 
+## App updates
+
+New versions download in the background. When one is ready, the main menu shows **Update available** and an **Update now** button. You can keep using the app and apply it later from the main menu. Updates do not automatically reload setup, role distribution, the editor, or an ongoing game; accepting an update in another tab does not reload this one either.
+
+**Update now** reloads the app after the new version is ready. Navigation is briefly disabled while it applies. Saved games and custom definitions stay on the device. A downloaded update can also be applied while offline.
+
+When upgrading from the older automatic-reload version for the first time, close all app tabs/windows and reopen once so the old cached version can hand over. Future updates use the button.
+
 ## Distribute roles on the phone
 
 In **Deal and review**, enable **Use app to distribute roles**. Pass the phone to each named player in order. They pick a face-down card, read its role description and press **Ready**. That card is removed before the next player takes a turn.

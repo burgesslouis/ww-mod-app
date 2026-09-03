@@ -1,0 +1,60 @@
+import { expect, test } from '@playwright/test'
+
+for (const cards of [false, true]) test(`Monk information is prepared before ${cards ? 'app distribution' : 'dealing'} and shown on Night 0`, async ({ page, context }, testInfo) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: /^New game$/i }).click()
+  await page.getByRole('button', { name: /^Continue$/ }).click()
+  for (let i = 6; i > 3; i--) await page.locator('.player-row .danger').last().click()
+  for (let i = 1; i <= 3; i++) await page.getByLabel(`Player ${i} name`).fill(['Alex', 'Blair', 'Casey'][i - 1])
+  await page.getByRole('button', { name: /^Continue$/ }).click()
+  await page.getByRole('button', { name: /Clear all/i }).click()
+  for (const name of ['Monk', 'Sinner', 'Alpha Wolf', 'Bard', 'Innkeeper']) {
+    const row = page.locator('.role-config-row').filter({ has: page.locator('.role-check strong').getByText(name, { exact: true }) })
+    await row.locator('.role-check').click()
+    if (['Monk', 'Sinner', 'Alpha Wolf'].includes(name)) await page.getByLabel(`${name} in play`, { exact: true }).check()
+  }
+  await page.getByRole('button', { name: /^Continue$/ }).click()
+  if (cards) {
+    await page.getByRole('button', { name: /Silent Night/ }).click()
+    await page.getByRole('button', { name: /Use app to distribute roles/ }).click()
+  }
+  await page.getByRole('button', { name: /Gardened allocation/ }).click()
+  await page.locator('.assignment-list select').first().selectOption({ label: 'Monk' })
+  const begin = page.getByRole('button', { name: cards ? /^Distribute roles$/ : /Deal roles & begin/ })
+  await expect(begin).toBeDisabled()
+  const information = page.getByRole('region', { name: 'Role information' })
+  await expect(information.getByRole('checkbox')).toHaveCount(2)
+  await page.getByLabel('Monk: reveal Bard').check()
+  await expect(begin).toBeDisabled()
+  await page.getByLabel('Monk: reveal Innkeeper').check()
+  await expect(begin).toBeEnabled()
+  await information.scrollIntoViewIfNeeded()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('monk-preparation.png') })
+  await begin.click()
+  if (cards) {
+    for (let i = 0; i < 3; i++) {
+      await page.getByRole('button', { name: /Choose my card/ }).click()
+      await page.getByRole('button', { name: 'Pick card 1', exact: true }).click()
+      await page.getByRole('button', { name: /^Ready$/ }).click()
+    }
+    await page.getByRole('button', { name: /Begin game/ }).click()
+  }
+  await expect(page.locator('.phase-card h1')).toHaveText('Alex · Absent roles')
+  await expect(page.locator('.phase-instruction')).toContainText('Tell this player the absent roles shown below')
+  if (cards) await expect(page.locator('.phase-instruction')).not.toContainText('Say “')
+  else await expect(page.locator('.phase-instruction')).toContainText('Say “Monk, wake up and learn which possible roles are absent.”')
+  await expect(page.locator('.action-information')).toContainText('Bard and Innkeeper')
+  await expect(page.locator('.target-grid button')).toHaveCount(0)
+  await page.evaluate(async () => { await navigator.serviceWorker.ready })
+  await context.setOffline(true)
+  await page.reload()
+  await page.getByRole('button', { name: /Resume game/i }).click()
+  await expect(page.locator('.action-information')).toContainText('Bard and Innkeeper')
+  await expect(page.getByRole('button', { name: /^Confirm$/ })).toBeEnabled()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('monk-night-zero.png') })
+  await page.getByRole('button', { name: /^Confirm$/ }).click()
+  await expect(page.locator('.phase-card h1')).toHaveText('Wolf Pack · Meet the Pack')
+  await context.setOffline(false)
+})

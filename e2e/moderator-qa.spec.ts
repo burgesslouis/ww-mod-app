@@ -62,6 +62,14 @@ test('moderator setup keeps options together and releases removed gardened cards
     await page.getByRole('button', { name: /deal roles & begin/i }).click()
     await expect(page.getByRole('button', { name: 'Choose a target', exact: true })).toBeDisabled()
     await expect(page.locator('.phase-instruction')).not.toContainText('Say “')
+    await expect(page.locator('.phase-card h1')).toHaveCSS('font-family', /Trattatello/)
+    await expect(page.locator('.phase-card h1')).toHaveCSS('font-variant-numeric', 'lining-nums')
+    await expect(page.locator('.phase-instruction')).not.toHaveCSS('font-family', /Trattatello/)
+    const headingFont = await page.evaluate(async () => {
+      try { return (await document.fonts.load('400 48px Trattatello', 'Night 0')).map(font => font.status) }
+      catch { return [] }
+    })
+    await testInfo.attach(`heading-font-${width}`, { body: JSON.stringify({ locallyAvailable: headingFont.includes('loaded') }), contentType: 'application/json' })
     await noHorizontalOverflow(page)
     await capture(page, testInfo, `role-action-${width}`)
     const confirm = page.getByRole('button', { name: 'Choose a target', exact: true })

@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
+      injectRegister: false,
       includeAssets: ['lantern-logo.png', 'role-card-back.png'],
       manifest: {
         name: 'Wherewolf Moderator',
@@ -21,6 +22,8 @@ export default defineConfig({
         ]
       },
       workbox: {
+        skipWaiting: false,
+        clientsClaim: true,
         navigateFallback: 'index.html',
         globPatterns: ['**/*.{js,css,html,png,json}']
       }
