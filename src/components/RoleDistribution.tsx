@@ -1,7 +1,7 @@
 import { ArrowRight, Check, Smartphone } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { GameSession } from '../domain/types'
-import { availableDealCards, confirmDealCard, finishRoleDeal, pickDealCard } from '../engine/dealing'
+import { confirmDealCard, displayDealCards, finishRoleDeal, pickDealCard, remainingDealCards } from '../engine/dealing'
 import { currentState } from '../engine/engine'
 import { moderatorTraits, roleTeamLabel } from '../ui/labels'
 
@@ -16,7 +16,9 @@ export default function RoleDistribution({ session, onChange }: { session: GameS
   const [concealed, setConcealed] = useState(false)
   const saving = useRef(false)
   const heading = useRef<HTMLHeadingElement>(null)
-  const cards = availableDealCards(session)
+  const cards = displayDealCards(session)
+  const remainingCards = remainingDealCards(session)
+  const cardCountText = `${cards.length} ${cards.length === 1 ? 'card' : 'cards'} to pick from · ${remainingCards.length} ${remainingCards.length === 1 ? 'card' : 'cards'} left in the deck`
   const selectedCard = deal.cards.find((card) => card.id === deal.selectedCardId)
   const rules = currentState(session).rules
   const role = rules.roles.find((role) => role.id === selectedCard?.roleId)
@@ -60,6 +62,7 @@ export default function RoleDistribution({ session, onChange }: { session: GameS
       <span className="eyebrow">PASS THE PHONE TO</span>
       <h1 ref={heading} tabIndex={-1}>{player.name}</h1>
       <p>Only look when it is your turn.</p>
+      <p className="deal-card-count" aria-live="polite">{cardCountText}</p>
       <button className="primary" disabled={busy} onClick={() => setUncovered(true)}>{selectedCard ? 'View my card' : 'Choose my card'} <ArrowRight /></button>
     </section> : selectedCard && role ? <section className="deal-reveal">
       <p className="deal-player">{player.name}, this is your role.</p>
@@ -84,6 +87,7 @@ export default function RoleDistribution({ session, onChange }: { session: GameS
     </section> : <section className="deal-selection">
       <h1 ref={heading} tabIndex={-1}>{player.name}, pick a card</h1>
       <p>Tap a card to turn it over.</p>
+      <p className="deal-card-count" aria-live="polite">{cardCountText}</p>
       <div className="deal-card-grid">{cards.map((card, index) => <button className="deal-card-back" key={card.id} disabled={busy} aria-label={`Pick card ${index + 1}`} onClick={() => save((current) => pickDealCard(current, card.id))}><img src={cardBackUrl} alt="" draggable={false} /></button>)}</div>
     </section>}
     {error && <div className="error-banner" role="alert">{error}</div>}

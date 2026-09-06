@@ -211,6 +211,7 @@ p { line-height: 1.58; }
 .phase-card { border: 1px solid #40392f; background: linear-gradient(145deg, #201d19, #181613 65%); padding: clamp(22px, 5vw, 46px); box-shadow: 0 25px 70px #0007; position: relative; }
 .phase-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 2px; background: linear-gradient(transparent, var(--gold), transparent); }
 .phase-card h1 { font-family: 'Trattatello', ui-sans-serif, system-ui, sans-serif; font-weight: 400; font-variant-numeric: lining-nums; font-size: clamp(35px, 6vw, 58px); margin: 13px 0 14px; line-height: 1.15; }
+.phase-card h1 .heading-number { font-family: ui-sans-serif, system-ui, sans-serif; font-weight: 700; font-variant-numeric: lining-nums tabular-nums; letter-spacing: .01em; }
 .phase-instruction { color: #b3ab9e; max-width: 650px; font-size: 14px; }
 .wake-together { border: 1px solid #4d3d24; background: #241e16; padding: 13px 15px; margin: 19px 0 0; }
 .wake-together > span { display: block; color: var(--gold); letter-spacing: .15em; font-size: 8px; margin-bottom: 9px; }
@@ -293,6 +294,7 @@ p { line-height: 1.58; }
 .deal-handoff p, .deal-selection > p { color: var(--muted); }
 .deal-handoff .primary { width: min(100%, 350px); min-height: 54px; }
 .deal-selection { padding-top: 30px; }
+.deal-card-count { color: var(--gold) !important; font-size: 13px; font-weight: 600; letter-spacing: .02em; }
 .deal-selection h1 { font-size: clamp(28px, 6vw, 42px); margin-bottom: 8px; overflow-wrap: anywhere; }
 .deal-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: clamp(10px, 2vw, 20px); max-width: 650px; margin: 26px auto; }
 .deal-card-back { display: block; width: 100%; max-width: 145px; justify-self: center; padding: 0; aspect-ratio: 331 / 600; border: 1px solid #8f682f; border-radius: 9px; background: #26180d; overflow: hidden; cursor: pointer; box-shadow: 0 6px 16px #0007; transition: transform .18s, box-shadow .18s; }
@@ -369,6 +371,7 @@ p { line-height: 1.58; }
   .command-stage { padding-bottom: 24px; }.phase-card { padding: 20px 16px; }
   .phase-card h1 { font-size: clamp(29px, 8vw, 34px); line-height: 1.15; }
   .command-topline { flex-wrap: wrap; gap: 4px; }.history-actions { flex-wrap: wrap; }
+  .history-actions .edit-setup-button { font-size: 10px !important; }
   .command-topline .icon-button { min-height: 44px; }
   .library-page > .page-heading { display: grid; gap: 16px; }
   .home-screen { padding-top: 30px; padding-bottom: 32px; }

@@ -49,6 +49,28 @@ git push
 
 Every push to `main` repeats the tests and deployment. You can also run it manually from **Actions → Test and deploy GitHub Pages → Run workflow**.
 
+### One-command publishing on Windows
+
+The repository includes `publish.ps1` for routine releases. From this folder, run:
+
+```powershell
+.\publish.ps1
+```
+
+The script checks that you are on `main`, shows the files that will be included, asks for a commit message and confirmation, then commits and pushes to GitHub. GitHub Actions runs the tests and deploys the Pages site after the push. To provide the message directly:
+
+```powershell
+.\publish.ps1 -Message "Describe the change"
+```
+
+Review the displayed file list before confirming; the script publishes all current changes in this repository. If Windows blocks PowerShell scripts, run it with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\publish.ps1
+```
+
+You can also run `publish.cmd` from Command Prompt or by double-clicking it; it applies the same PowerShell bypass for this local helper.
+
 ### Rehearse a Pages build locally
 
 To see what GitHub will generate for a repository named `wherewolf-moderator`:

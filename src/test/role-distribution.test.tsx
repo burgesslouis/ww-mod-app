@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BASE_ROLES, BASE_SCENARIO } from '../data/base'
 import { ROLE } from '../domain/ids'
 import RoleDistribution from '../components/RoleDistribution'
-import { availableDealCards, createRoleDeal, pickDealCard } from '../engine/dealing'
+import { availableDealCards, createRoleDeal, displayDealCards, pickDealCard, remainingDealCards } from '../engine/dealing'
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -45,5 +45,27 @@ describe('player-facing role cards', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ready' }))
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2))
     await screen.findByRole('alert')
+  })
+
+  it('shows the selectable pool and total remaining deck for shuffled and gardened seats', () => {
+    const configured = {
+      ...selectedSession().setup,
+      assignment: 'locked-random' as const,
+      players: selectedSession().setup.players.map((player, index) => index === 0 ? { ...player, lockedRoleId: ROLE.alphaWolf } : player),
+    }
+    const gardened = createRoleDeal(configured)
+    const { container } = render(<RoleDistribution session={gardened} onChange={vi.fn()} />)
+    expect(availableDealCards(gardened)).toHaveLength(1)
+    expect(displayDealCards(gardened)).toHaveLength(3)
+    expect(remainingDealCards(gardened)).toHaveLength(3)
+    fireEvent.click(screen.getByRole('button', { name: 'Choose my card' }))
+    expect(screen.getByText('3 cards to pick from · 3 cards left in the deck')).toBeInTheDocument()
+    cleanup()
+    const shuffled = createRoleDeal(selectedSession().setup)
+    render(<RoleDistribution session={shuffled} onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Choose my card' }))
+    expect(availableDealCards(shuffled)).toHaveLength(3)
+    expect(screen.getByText('3 cards to pick from · 3 cards left in the deck')).toBeInTheDocument()
+    expect(container).toBeTruthy()
   })
 })

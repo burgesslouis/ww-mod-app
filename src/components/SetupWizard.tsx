@@ -7,7 +7,7 @@ import { capitaliseLabel, displayActionLabel, moderatorTraits, roleTeamLabel } f
 import { reconcileGardenedSeats } from '../ui/setup'
 import { absentRoleCandidates, absentRoleRequirements, reconcileAbsentRoleSelections } from '../engine/setupInformation'
 
-interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
+interface Props { roles: RoleDefinition[]; packs: PackDefinition[]; scenarios: ScenarioDefinition[]; initialSetup?: GameSetup; onCancel: () => void; onStart: (setup: GameSetup) => void | Promise<void> }
 type RoleConfig = { possible: boolean; min: number; max: number; exact: number }
 
 const player = (index: number): PlayerSetup => ({ id: crypto.randomUUID(), name: '' })
@@ -16,23 +16,32 @@ const initialRoleConfig = (roles: RoleDefinition[], packs: PackDefinition[]): Re
   const baseRoleIds = new Set(packs.find((pack) => pack.id === PACK_ID)?.roleIds ?? [])
   return Object.fromEntries(roles.filter((role) => baseRoleIds.has(role.id) && !role.categories.includes('Status')).map((role) => [role.id, defaultRoleConfig(role, true)]))
 }
+const roleConfigFromSetup = (setup: GameSetup, roles: RoleDefinition[], packs: PackDefinition[]): Record<string, RoleConfig> => {
+  const selectedIds = new Set(packs.filter(pack => setup.packIds.includes(pack.id)).flatMap(pack => pack.roleIds))
+  const publicRanges = new Map(setup.publicRoles.map(range => [range.roleId, range]))
+  const exactCounts = new Map<string, number>(); setup.exactDeck.forEach(id => exactCounts.set(id, (exactCounts.get(id) ?? 0) + 1))
+  return Object.fromEntries(roles.filter(role => selectedIds.has(role.id) && !role.categories.includes('Status')).map(role => {
+    const range = publicRanges.get(role.id)
+    return [role.id, { possible: Boolean(range), min: range?.min ?? role.multiplicity.min, max: range?.max ?? role.multiplicity.max, exact: exactCounts.get(role.id) ?? 0 }]
+  }))
+}
 
-export default function SetupWizard({ roles, packs, scenarios, onCancel, onStart }: Props) {
+export default function SetupWizard({ roles, packs, scenarios, initialSetup, onCancel, onStart }: Props) {
   const [step, setStep] = useState(0)
-  const [scenarioId, setScenarioId] = useState(scenarios[0]?.id ?? '')
+  const [scenarioId, setScenarioId] = useState(initialSetup?.scenarioId ?? scenarios[0]?.id ?? '')
   const scenario = scenarios.find((item) => item.id === scenarioId) ?? scenarios[0]
-  const [packIds, setPackIds] = useState<string[]>(scenario?.defaultPackIds ?? [])
-  const [players, setPlayers] = useState<PlayerSetup[]>(Array.from({ length: 6 }, (_, index) => player(index)))
-  const [roleConfig, setRoleConfig] = useState<Record<string, RoleConfig>>(() => initialRoleConfig(roles, packs))
-  const [assignment, setAssignment] = useState<'random' | 'locked-random'>('random')
-  const [nightOrder, setNightOrder] = useState<string[]>(scenario?.nightOrder ?? [])
-  const [silentNight, setSilentNight] = useState(false)
-  const [distributeRolesInApp, setDistributeRolesInApp] = useState(false)
+  const [packIds, setPackIds] = useState<string[]>(initialSetup?.packIds ?? scenario?.defaultPackIds ?? [])
+  const [players, setPlayers] = useState<PlayerSetup[]>(initialSetup?.players.map(item => ({ ...item })) ?? Array.from({ length: 6 }, (_, index) => player(index)))
+  const [roleConfig, setRoleConfig] = useState<Record<string, RoleConfig>>(() => initialSetup ? roleConfigFromSetup(initialSetup, roles, packs) : initialRoleConfig(roles, packs))
+  const [assignment, setAssignment] = useState<'random' | 'locked-random'>(initialSetup?.assignment === 'locked-random' ? 'locked-random' : 'random')
+  const [nightOrder, setNightOrder] = useState<string[]>(initialSetup?.nightOrder ?? scenario?.nightOrder ?? [])
+  const [silentNight, setSilentNight] = useState(initialSetup?.silentNight ?? false)
+  const [distributeRolesInApp, setDistributeRolesInApp] = useState(initialSetup?.distributeRolesInApp ?? false)
   const [showSummary, setShowSummary] = useState(false)
   const [error, setError] = useState<string>('')
   const [starting, setStarting] = useState(false)
   const [allocationNotice, setAllocationNotice] = useState('')
-  const [absentRoleSelections, setAbsentRoleSelections] = useState<NonNullable<GameSetup['absentRoleSelections']>>({})
+  const [absentRoleSelections, setAbsentRoleSelections] = useState<NonNullable<GameSetup['absentRoleSelections']>>(initialSetup?.absentRoleSelections ?? {})
   const [informationNotice, setInformationNotice] = useState('')
 
   const selectedPacks = useMemo(() => packs.filter((pack) => packIds.includes(pack.id)), [packs, packIds])

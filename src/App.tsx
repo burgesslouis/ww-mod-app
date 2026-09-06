@@ -8,7 +8,7 @@ import { applyToSession, createSession, currentState, redo, undo } from './engin
 import { listArtifacts, saveSession, seedBuiltIns } from './storage/db'
 import HomeScreen from './components/HomeScreen'
 import SetupWizard from './components/SetupWizard'
-import GameView from './components/GameView'
+import GameView, { canReturnToSetup } from './components/GameView'
 import Library from './components/Library'
 import Editor from './components/Editor'
 import RoleDistribution from './components/RoleDistribution'
@@ -25,6 +25,7 @@ export default function App({ updater = appUpdater }: { updater?: AppUpdater }) 
   const [session, setSession] = useState<GameSession | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [editArtifact, setEditArtifact] = useState<Artifact | null>(null)
+  const [editingSetupSessionId, setEditingSetupSessionId] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
 
   const refreshArtifacts = useCallback(async () => setArtifacts(await listArtifacts()), [])
@@ -47,7 +48,7 @@ export default function App({ updater = appUpdater }: { updater?: AppUpdater }) 
     return [...catalogue.values()].sort((left, right) => left.label.localeCompare(right.label))
   }, [roles])
 
-  async function openSession(next: GameSession) { await saveSession(next); setSession(next); setScreen('game') }
+  async function openSession(next: GameSession) { await saveSession(next); setSession(next); setEditingSetupSessionId(null); setScreen('game') }
   async function updateSession(next: GameSession) { await saveSession(next); setSession(next) }
   function openEditor(artifact: Artifact) { setEditArtifact(artifact); setScreen('editor') }
 
@@ -66,8 +67,12 @@ export default function App({ updater = appUpdater }: { updater?: AppUpdater }) 
 
       <main className={`main-content screen-${screen}`}>
         {screen === 'home' && <HomeScreen onNew={() => setScreen('setup')} onResume={openSession} onLibrary={() => setScreen('library')} update={update} onUpdate={updater.apply} />}
-        {screen === 'setup' && <SetupWizard roles={roles} packs={packs} scenarios={scenarios} onCancel={() => setScreen('home')} onStart={(setup) => openSession((setup.distributeRolesInApp ? createRoleDeal : createSession)(setup, `${new Date().toLocaleDateString()} game`))} />}
-        {screen === 'game' && session && <GameView session={session} roles={roles} onChange={updateSession} onExit={() => setScreen('home')} onUndo={() => updateSession(undo(session))} onRedo={() => updateSession(redo(session))} onCommand={(command) => updateSession(applyToSession(session, command))} />}
+        {screen === 'setup' && <SetupWizard roles={roles} packs={packs} scenarios={scenarios} initialSetup={editingSetupSessionId && session?.id === editingSetupSessionId ? session.setup : undefined} onCancel={() => { setEditingSetupSessionId(null); setScreen(editingSetupSessionId ? 'game' : 'home') }} onStart={(setup) => {
+          const next = (setup.distributeRolesInApp ? createRoleDeal : createSession)(setup, `${new Date().toLocaleDateString()} game`)
+          if (editingSetupSessionId && session?.id === editingSetupSessionId) { next.id = session.id; next.createdAt = session.createdAt }
+          return openSession(next)
+        }} />}
+        {screen === 'game' && session && <GameView session={session} roles={roles} onChange={updateSession} onExit={() => setScreen('home')} onReturnToSetup={canReturnToSetup(session) ? () => { setEditingSetupSessionId(session.id); setScreen('setup') } : undefined} onUndo={() => updateSession(undo(session))} onRedo={() => updateSession(redo(session))} onCommand={(command) => updateSession(applyToSession(session, command))} />}
         {screen === 'library' && <Library artifacts={artifacts} roles={roles} packs={packs} scenarios={scenarios} traitCatalogue={traits} onRefresh={refreshArtifacts} onEdit={openEditor} />}
         {screen === 'editor' && editArtifact && <Editor artifact={editArtifact} traitCatalogue={traits} onSaved={async (artifact) => { await refreshArtifacts(); setEditArtifact(artifact) }} onClose={() => setScreen('library')} />}
       </main>

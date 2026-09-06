@@ -14,12 +14,33 @@ export function createRoleDeal(setup: GameSetup, name?: string): GameSession {
   return session
 }
 
+export function remainingDealCards(session: GameSession) {
+  const deal = session.roleDeal
+  if (!deal || deal.finished) return []
+  return deal.cards.filter((card) => !deal.picks.some((pick) => pick.cardId === card.id))
+}
+
+/** Every remaining back is displayed; reservations are intentionally not visible. */
+export function displayDealCards(session: GameSession) {
+  return remainingDealCards(session)
+}
+
+function uniformDrawIndex(seed: number, draw: number, length: number): number {
+  if (length <= 1) return 0
+  let value = (seed ^ Math.imul(draw + 1, 0x9e3779b9)) >>> 0
+  const limit = Math.floor(0x100000000 / length) * length
+  do {
+    value ^= value << 13; value ^= value >>> 17; value ^= value << 5; value >>>= 0
+  } while (value >= limit)
+  return value % length
+}
+
 export function availableDealCards(session: GameSession) {
   const deal = session.roleDeal
   if (!deal || deal.finished) return []
   const player = session.setup.players[deal.picks.length]
   if (!player) return []
-  const remaining = deal.cards.filter((card) => !deal.picks.some((pick) => pick.cardId === card.id))
+  const remaining = remainingDealCards(session)
   const reserved = remaining.filter((card) => card.reservedFor === player.id)
   return reserved.length ? reserved : remaining.filter((card) => !card.reservedFor)
 }
@@ -32,13 +53,19 @@ function pendingDeal(session: GameSession) {
 export function pickDealCard(session: GameSession, cardId: string): GameSession {
   const deal = pendingDeal(session)
   if (deal.selectedCardId) throw new Error('Read your selected card and press Ready first.')
-  if (!availableDealCards(session).some((card) => card.id === cardId)) throw new Error('This card is not available.')
-  return { ...session, updatedAt: new Date().toISOString(), roleDeal: { ...deal, selectedCardId: cardId } }
+  const remaining = remainingDealCards(session)
+  if (!remaining.some((card) => card.id === cardId)) throw new Error('This card is not available.')
+  const player = session.setup.players[deal.picks.length]
+  const reserved = remaining.find((card) => card.reservedFor === player?.id)
+  const pool = remaining.filter((card) => !card.reservedFor)
+  const selected = reserved ?? (pool.length === remaining.length ? remaining.find((card) => card.id === cardId) : pool[uniformDrawIndex(session.setup.seed, deal.picks.length, pool.length)])
+  if (!selected) throw new Error('There are no cards available for this seat.')
+  return { ...session, updatedAt: new Date().toISOString(), roleDeal: { ...deal, selectedCardId: selected.id } }
 }
 
 export function confirmDealCard(session: GameSession): GameSession {
   const deal = pendingDeal(session)
-  const card = availableDealCards(session).find((card) => card.id === deal.selectedCardId)
+  const card = remainingDealCards(session).find((card) => card.id === deal.selectedCardId)
   const player = session.setup.players[deal.picks.length]
   if (!card || !player) throw new Error('Choose a card first.')
   return {

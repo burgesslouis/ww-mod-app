@@ -6,7 +6,16 @@ import { availableCommand, currentState, effectiveProperties, factionName } from
 
 interface Props {
   session: GameSession; roles: RoleDefinition[]; onChange: (session: GameSession) => void; onExit: () => void
-  onUndo: () => void; onRedo: () => void; onCommand: (command: GameCommand) => void
+  onUndo: () => void; onRedo: () => void; onCommand: (command: GameCommand) => void; onReturnToSetup?: () => void
+}
+
+export function canReturnToSetup(session: GameSession): boolean {
+  const state = currentState(session)
+  return session.cursor === 0 && session.snapshots.length === 1 && state.pipeline === 'setup' && state.cycle === 0 && !state.gameOver && state.events.length === 1 && state.events[0]?.type === 'game.started' && (!session.roleDeal || session.roleDeal.finished)
+}
+
+function phaseTitle(title: string) {
+  return title.split(/(\d+)/g).map((part, index) => part.match(/^\d+$/) ? <span className="heading-number" key={`${part}-${index}`}>{part}</span> : part)
 }
 
 export function voteUiContext(phase: PhaseDefinition | undefined, latestVoteKind?: VoteState['kind']) {
@@ -17,7 +26,7 @@ export function voteUiContext(phase: PhaseDefinition | undefined, latestVoteKind
   }
 }
 
-export default function GameView({ session, roles, onExit, onUndo, onRedo, onCommand }: Props) {
+export default function GameView({ session, roles, onExit, onUndo, onRedo, onCommand, onReturnToSetup }: Props) {
   const state = currentState(session), pending = availableCommand(state)
   const [selected, setSelected] = useState<string[]>([])
   const [totals, setTotals] = useState<Record<string, number>>({})
@@ -71,11 +80,11 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
       </aside>
 
       <section className="command-stage">
-        <div className="command-topline"><button className="icon-button mobile-only" onClick={() => setShowRoster(true)}><Users /> Roster</button><div className="history-actions"><button className="icon-button" onClick={onUndo} disabled={session.cursor <= 0} title="Undo"><RotateCcw /></button><button className="icon-button" onClick={onRedo} disabled={session.cursor >= session.snapshots.length - 1} title="Redo"><RotateCw /></button><button className="icon-button" onClick={() => setShowTrace(true)}><History /> History</button><button className="icon-button" onClick={() => setShowOverride(true)}><Settings2 /> Override</button></div></div>
+        <div className="command-topline"><button className="icon-button mobile-only" onClick={() => setShowRoster(true)}><Users /> Roster</button><div className="history-actions">{onReturnToSetup && canReturnToSetup(session) && <button className="icon-button edit-setup-button" onClick={onReturnToSetup}><Settings2 /> Edit setup</button>}<button className="icon-button" onClick={onUndo} disabled={session.cursor <= 0} title="Undo"><RotateCcw /></button><button className="icon-button" onClick={onRedo} disabled={session.cursor >= session.snapshots.length - 1} title="Redo"><RotateCw /></button><button className="icon-button" onClick={() => setShowTrace(true)}><History /> History</button><button className="icon-button" onClick={() => setShowOverride(true)}><Settings2 /> Override</button></div></div>
 
         <div className={`phase-card ${pending.type === 'game-over' ? 'game-over-card' : ''}`}>
           <span className="eyebrow">{pending.type === 'choose' ? 'ROLE ACTION' : pending.type === 'vote' ? 'VOTE' : pending.type === 'game-over' ? 'GAME OVER' : 'NEXT STEP'}</span>
-          <h1>{pending.title}</h1>
+          <h1>{phaseTitle(pending.title)}</h1>
           {pending.type === 'choose' && <>
             <p className="phase-instruction">{pending.instructions}</p>
             {(pending.participantIds?.length || pending.information?.length) && <div className="wake-together">{pending.participantIds?.length && <><span>{pending.participantIds.length > 1 ? 'WAKE TOGETHER' : 'WAKE THIS PLAYER'}</span><div className="wake-participants">{pending.participantIds.map((id) => <strong key={id}>{label(id)}</strong>)}</div></>}{pending.information?.length && <div className="action-information">{pending.information.map((item) => <div key={item.label}><span>{item.label}</span><strong>{item.value}</strong><small>{item.status === 'in-play' ? 'In play' : 'Not in play'}</small></div>)}</div>}</div>}
