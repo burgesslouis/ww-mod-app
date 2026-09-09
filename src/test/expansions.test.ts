@@ -98,14 +98,19 @@ describe('Official expansion defaults', () => {
     expect(state.players[0].factionWinScope).toBe('exact')
     expect(state.players[2].factionWinScope).toBe('alignment')
   })
-  it('lets every initial Shadow-aligned role identify the Hag without waking the Hag to learn Shadows', () => {
-    const recipients = [ROLE.alphaWolf, ROLE.packWolf, ROLE.wolfPup, D.outcastWolf, D.loneWolf, D.vampire, D.nosferatu, D.igor, D.necromancer, D.undertaker, D.possessed, H.corruptGuard, H.goblin]
+  it('lets every initial Shadow role identify the Hag without waking the Hag to learn Shadows', () => {
+    const recipients = [ROLE.alphaWolf, ROLE.packWolf, ROLE.wolfPup, D.outcastWolf, D.loneWolf, D.vampire, D.nosferatu, D.necromancer, D.possessed]
     for (const roleId of recipients) {
       const role = allRoles.find((entry) => entry.id === roleId)!
       expect(role.abilities.some((ability) => ability.trigger === 'setup.action' && effectIdentifiesHag(ability.effects)), role.meta.name).toBe(true)
     }
     const hag = allRoles.find((entry) => entry.id === D.hag)!
     expect(hag.abilities.some((ability) => effectIdentifiesHag(ability.effects))).toBe(false)
+    const nonShadowRecipients = [D.igor, D.undertaker, H.corruptGuard, H.goblin]
+    for (const roleId of nonShadowRecipients) {
+      const role = allRoles.find((entry) => entry.id === roleId)!
+      expect(role.abilities.some((ability) => ability.trigger === 'setup.action' && effectIdentifiesHag(ability.effects)), role.meta.name).toBe(false)
+    }
   })
 
   it('ships every official role and keeps created roles out of the dealable set', () => {
