@@ -117,6 +117,8 @@ test('Healer can skip an empty night, resume offline, then revive on the next ni
   await hungVote(page)
   await page.locator('.target-grid button').filter({ hasText: 'Sinner' }).click()
   await page.getByRole('button', { name: /confirm 1 selection/i }).click()
+  await expect(page.getByRole('heading', { name: 'Tap the bitten players.' })).toBeVisible()
+  await page.getByRole('button', { name: /continue to attack results/i }).click()
   await page.getByRole('button', { name: /^continue$/i }).click()
   await expect(page.getByRole('heading', { name: 'Healer · Revive' })).toBeVisible()
   await page.locator('.target-grid button').filter({ hasText: 'Sinner' }).click()
