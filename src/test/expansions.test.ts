@@ -286,6 +286,7 @@ describe('Official expansion defaults', () => {
     let state = createInitialState(officialSetup([ROLE.witch, D.necromancer, ROLE.farmer]))
     state = executeAbilityForTest(state, 'p1', `${D.necromancer}.curse`, ['p0', 'p2'])
     state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    state.pendingAnnouncements = []
     const protect = availableCommand(state)
     expect(protect).toMatchObject({ type: 'choose', abilityId: `${ROLE.witch}.protect` })
     if (protect.type !== 'choose') return
