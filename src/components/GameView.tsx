@@ -26,6 +26,47 @@ export function voteUiContext(phase: PhaseDefinition | undefined, latestVoteKind
   }
 }
 
+export type PrivateResultTone = 'danger' | 'mystic' | 'positive' | 'neutral' | 'information'
+
+export interface PrivateResultItem {
+  subject?: string
+  value: string
+  tone: PrivateResultTone
+}
+
+function privateResultTone(value: string): PrivateResultTone {
+  const result = value.trim().toUpperCase()
+  if (/^(?:NOT\b|NO RESULT$|ABSENT$|NONE$|NOT IN PLAY$)/.test(result)) return 'neutral'
+  if (result.includes('CORRUPT') || result.includes('CURSED')) return 'danger'
+  if (result.includes('MYSTIC')) return 'mystic'
+  if (result === 'PRESENT' || result === 'VILLAGE') return 'positive'
+  return 'information'
+}
+
+export function privateResultItems(message: string): PrivateResultItem[] {
+  return message.split(/\s+·\s+/).map((part) => {
+    const separator = part.indexOf(':')
+    const subject = separator >= 0 ? part.slice(0, separator).trim() : undefined
+    const value = (separator >= 0 ? part.slice(separator + 1) : part).trim()
+    return { ...(subject ? { subject } : {}), value, tone: privateResultTone(value) }
+  }).filter((item) => item.value)
+}
+
+function PrivateResult({ message }: { message: string }) {
+  const results = privateResultItems(message)
+  return <section className="private-result-reveal" role="status" aria-label="Private check result">
+    <header><Eye /><span>SHOW PRIVATELY</span><small>Check result</small></header>
+    <div className={`private-result-list ${results.length > 1 ? 'multiple' : ''}`}>
+      {results.map((result, index) => <article className={`private-result-outcome ${result.tone}`} key={`${result.subject ?? 'result'}-${index}`}>
+        <div className="private-result-icon" aria-hidden="true">{result.tone === 'danger' ? <AlertTriangle /> : result.tone === 'neutral' ? <X /> : result.tone === 'positive' ? <Check /> : <Eye />}</div>
+        {result.subject && <span className="private-result-subject">{result.subject}</span>}
+        <strong>{result.value}</strong>
+      </article>)}
+    </div>
+    <p>Show this result to the player, then take the phone back before continuing.</p>
+  </section>
+}
+
 export default function GameView({ session, roles, onExit, onUndo, onRedo, onCommand, onReturnToSetup }: Props) {
   const state = currentState(session), pending = availableCommand(state)
   const [selected, setSelected] = useState<string[]>([])
@@ -101,7 +142,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
             {entered !== expected && <label className="accept-warning"><input type="checkbox" checked={acceptMismatch} onChange={(event) => setAcceptMismatch(event.target.checked)} /><span className="check-box">{acceptMismatch && <Check />}</span><div><strong>Save this tally anyway</strong><small>The mismatch will be marked in the game history.</small></div></label>}
             <button className="primary command-button" onClick={submitVote}>Record vote <ArrowRight /></button>
           </>}
-          {pending.type === 'advance' && <><p className="phase-instruction">{pending.description}</p>{pending.kind === 'tap' && pending.targetIds?.length ? <div className="tap-panel"><span className="eyebrow">TAP NOW</span><strong>{formatList(pending.targetIds.map(label))}</strong><small>These players were bitten successfully. Tap them before continuing.</small></div> : null}{state.ballot.length > 0 && state.phaseId.includes('ballot') && <div className="ballot-banner"><span>THE BALLOT</span><strong>{formatList(state.ballot.map(label))}</strong></div>}<button className="primary command-button" onClick={() => submit({ type: 'advance' })}>{pending.actionLabel ?? 'Continue'} <ArrowRight /></button></>}
+          {pending.type === 'advance' && <>{pending.title === 'Result' ? <PrivateResult message={pending.description} /> : <p className="phase-instruction">{pending.description}</p>}{pending.kind === 'tap' && pending.targetIds?.length ? <div className="tap-panel"><span className="eyebrow">TAP NOW</span><strong>{formatList(pending.targetIds.map(label))}</strong><small>These players were bitten successfully. Tap them before continuing.</small></div> : null}{state.ballot.length > 0 && state.phaseId.includes('ballot') && <div className="ballot-banner"><span>THE BALLOT</span><strong>{formatList(state.ballot.map(label))}</strong></div>}<button className="primary command-button" onClick={() => submit({ type: 'advance' })}>{pending.actionLabel ?? 'Continue'} <ArrowRight /></button></>}
           {pending.type === 'game-over' && <>{victoryMessage && <p className="phase-instruction">{victoryMessage}</p>}{pending.factions.length > 0 && <div className="victory-factions"><span>WINNING SIDE</span><strong>{pending.factions.map(factionLabel).join(' · ')}</strong></div>}<h2 className="winner-heading">Winners</h2>{pending.winners.length ? <><p className="phase-instruction">{formatList(pending.winners.map(label))} {pending.winners.length === 1 ? 'wins' : 'win'} the game.</p><div className="winner-list">{pending.winners.map((id) => { const player = state.players.find((entry) => entry.id === id); const personal = state.personalWinners.find((winner) => winner.playerId === id); return <div key={id}><span>{label(id).slice(0, 1)}</span><div><strong>{label(id)}</strong><small>{roleFor(player?.roleId ?? '')?.meta.name}{personal ? ` · ${personal.reason}` : ''}</small></div></div> })}</div></> : <p className="phase-instruction">No individual winners were recorded.</p>}<button className="secondary command-button" onClick={onExit}>Return home</button></>}
           {error && <div className="error-banner"><AlertTriangle /> {error}</div>}
         </div>
