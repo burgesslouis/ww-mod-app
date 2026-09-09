@@ -4,7 +4,7 @@ import { BASE_PACK } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { DARKEST_PACK_ID, DARKEST_ROLE as D, FACTION, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
 import type { GameSetup } from '../domain/types'
-import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, factionName, killPlayerForTest, resolveAttackForTest, validateSetup } from '../engine/engine'
+import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, factionName, killPlayerForTest, resolveAttackForTest, resolveAttacksForTest, resolveMorningForTest, validateSetup } from '../engine/engine'
 
 const allRoles = [...BASE_PACK.roles, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]
 
@@ -20,6 +20,79 @@ function officialSetup(roleIds: string[], possible = roleIds): GameSetup {
 }
 
 describe('Official expansion defaults', () => {
+  it('queues one combined tap step only for successful healable bites', () => {
+    let state = createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.farmer]))
+    state = resolveAttacksForTest({ ...state, attacks: [{ id: 'a1', targetId: 'p0', type: 'shadow', notifyTargetOnHit: true, healable: true }, { id: 'a2', targetId: 'p0', type: 'shadow', notifyTargetOnHit: true, healable: true }] })
+    expect(state.events.filter((event) => event.type === 'attack.hit').map((event) => event.targetId)).toEqual(['p0', 'p0'])
+    expect(state.pendingAnnouncements.filter((announcement) => announcement.kind === 'tap')).toEqual([expect.objectContaining({ targetIds: ['p0'] })])
+  })
+
+  it('does not tap or kill a protected or Madman-cancelled bite', () => {
+    let protectedState = createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.farmer]))
+    protectedState.players[0].statuses.push({ id: 'test.protection', name: 'Protection', duration: 'night', appliedCycle: 0, data: { attackType: 'shadow' } })
+    protectedState = resolveAttackForTest(protectedState, 'p0', 'shadow', { notifyTargetOnHit: true, healable: true })
+    expect(protectedState.players[0].alive).toBe(true)
+    expect(protectedState.events.some((event) => event.type === 'attack.hit')).toBe(false)
+    let cancelledState = createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.farmer]))
+    cancelledState.facts.cancelNextShadowAttack = true
+    cancelledState = resolveAttackForTest(cancelledState, 'p0', 'shadow', { notifyTargetOnHit: true, healable: true })
+    expect(cancelledState.players[0].alive).toBe(true)
+    expect(cancelledState.events.some((event) => event.type === 'attack.hit')).toBe(false)
+  })
+
+  it('rejects Silent Night when a possible declarative spoken dependency exists', () => {
+    const setup = officialSetup([H.assassin, ROLE.wizard, ROLE.farmer])
+    setup.silentNight = true
+    expect(validateSetup(setup).issues.some((issue) => issue.path === 'silentNight')).toBe(true)
+  })
+
+  it('places a reactive Assassin action before a possible Mystic check', () => {
+    const state = createInitialState(officialSetup([H.assassin, ROLE.wizard, ROLE.farmer]))
+    state.pipeline = 'cycle'
+    state.cycle = 1
+    state.phaseId = 'official.night.actions'
+    state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === state.phaseId)
+    expect(availableCommand(state)).toMatchObject({ type: 'choose', actorId: 'p0', abilityId: `${H.assassin}.kill` })
+  })
+
+  it('lets a guardable direct kill redirect through Guardian Angel data', () => {
+    const state = createInitialState(officialSetup([ROLE.guardian, H.assassin, ROLE.farmer]))
+    state.relationships.push({ type: 'wherewolf.base.relationship.guarded', from: 'p0', to: 'p2' })
+    const result = executeAbilityForTest(state, 'p1', `${H.assassin}.kill`, ['p2'])
+    expect(result.players.find((player) => player.id === 'p2')?.alive).toBe(true)
+    expect(result.players.find((player) => player.id === 'p0')?.alive).toBe(false)
+    expect(result.events.some((event) => event.type === 'kill.redirected' && event.targetId === 'p0')).toBe(true)
+  })
+
+  it('does not let Guardian redirect an explicitly unguardable attack', () => {
+    const state = createInitialState(officialSetup([ROLE.guardian, ROLE.farmer, ROLE.alphaWolf]))
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseId = 'official.night.attacks'
+    state.relationships.push({ type: 'wherewolf.base.relationship.guarded', from: 'p0', to: 'p1' })
+    const result = resolveAttackForTest(state, 'p1', 'shadow', { modifiers: { guardable: false, protectable: false } })
+    expect(result.players.find((player) => player.id === 'p1')?.alive).toBe(false)
+    expect(result.players.find((player) => player.id === 'p0')?.alive).toBe(true)
+    expect(result.events.some((event) => event.type === 'attack.redirected')).toBe(false)
+  })
+
+  it('still reads legacy witchProtectable data from saved attacks', () => {
+    let state = createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.farmer]))
+    state.players[0].statuses.push({ id: 'test.protection', name: 'Protection', duration: 'night', appliedCycle: 0, data: { attackType: 'shadow' } })
+    state = resolveAttackForTest(state, 'p0', 'shadow', { modifiers: { witchProtectable: false } })
+    expect(state.players[0].alive).toBe(false)
+  })
+
+  it('allows the moderator to assign a loaded status role through the typed override', () => {
+    let state = createInitialState(officialSetup([ROLE.farmer, ROLE.alphaWolf, ROLE.farmer]))
+    state = applyCommand(state, { type: 'override', reason: 'Table ruling', operation: { type: 'role', playerId: 'p0', roleId: D.minion } }).state
+    expect(state.players[0].roleId).toBe(D.minion)
+  })
+
+  it('uses a public conditional faction recommendation without changing the hidden deal', () => {
+    const state = createInitialState(officialSetup([H.corruptGuard, H.spy, ROLE.farmer]))
+    expect(state.players[0].factionOverride).toBe(FACTION.criminals)
+    expect(state.players[0].factionWinScope).toBe('exact')
+    expect(state.players[2].factionWinScope).toBe('alignment')
+  })
   it('ships every official role and keeps created roles out of the dealable set', () => {
     expect(DARKEST_NIGHT_ROLES).toHaveLength(20)
     expect(HIDDEN_MOTIVES_ROLES).toHaveLength(19)
@@ -225,6 +298,44 @@ describe('Official expansion defaults', () => {
     expect(state.players.find((player) => player.id === 'p0')?.alive).toBe(false)
   })
 
+  it('removes the Undertaker as a morning loser after the Necromancer dies', () => {
+    let state = createInitialState(officialSetup([D.undertaker, D.necromancer, ROLE.farmer]))
+    state = killPlayerForTest(state, 'p1', 'Burned')
+
+    state = resolveMorningForTest(state)
+
+    expect(state.players[0].alive).toBe(false)
+    expect(state.personalLosers).toContainEqual({ playerId: 'p0', reason: 'the Necromancer is dead' })
+    expect(state.facts.nightDeaths).toContain('p0')
+    expect(state.pendingSpiritAssignments).not.toContain('p0')
+  })
+
+  it('keeps Igor while either supported undead faction can still win', () => {
+    let minionState = createInitialState(officialSetup([D.igor, D.vampire, ROLE.farmer]))
+    minionState.players[2].roleId = D.minion
+    minionState = resolveMorningForTest(killPlayerForTest(minionState, 'p1', 'Killed'))
+    expect(minionState.players[0].alive).toBe(true)
+    expect(minionState.personalLosers).toEqual([])
+
+    let nosferatuState = createInitialState(officialSetup([D.igor, D.vampire, D.nosferatu, ROLE.farmer]))
+    nosferatuState = resolveMorningForTest(killPlayerForTest(nosferatuState, 'p1', 'Killed'))
+    expect(nosferatuState.players[0].alive).toBe(true)
+    expect(nosferatuState.personalLosers).toEqual([])
+  })
+
+  it('removes Igor as a morning loser once no supported undead faction can win', () => {
+    let state = createInitialState(officialSetup([D.igor, D.vampire, D.nosferatu, ROLE.farmer]))
+    state = killPlayerForTest(state, 'p1', 'Killed')
+    state = killPlayerForTest(state, 'p2', 'Killed')
+
+    state = resolveMorningForTest(state)
+
+    expect(state.players[0].alive).toBe(false)
+    expect(state.personalLosers).toContainEqual({ playerId: 'p0', reason: 'neither supported undead faction can still win' })
+    expect(state.facts.nightDeaths).toContain('p0')
+    expect(state.pendingSpiritAssignments).not.toContain('p0')
+  })
+
   it('awards a Mystic victory when the Crusades countdown is not stopped', () => {
     let state = createInitialState(officialSetup([H.templar, H.inquisitor, ROLE.wizard, ROLE.alphaWolf]))
     state = killPlayerForTest(state, 'p1', 'shadow')
@@ -295,5 +406,28 @@ describe('Official expansion defaults', () => {
     state = applyCommand(state, { type: 'choose', actorId: check.actorId, abilityId: check.abilityId, targets: [] }).state
     while (availableCommand(state).type === 'advance' && availableCommand(state).title === 'Result') state = applyCommand(state, { type: 'advance' }).state
     expect(availableCommand(state)).not.toMatchObject({ abilityId: `${ROLE.medium}.spirit-check` })
+  })
+
+  it('does not call the Medium Spirit check when no Spirit is possible', () => {
+    let state = createInitialState(officialSetup([ROLE.medium, ROLE.farmer, ROLE.farmer]))
+    state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const check = availableCommand(state)
+    expect(check).toMatchObject({ type: 'choose', abilityId: `${ROLE.medium}.check` })
+    if (check.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: check.actorId, abilityId: check.abilityId, targets: [] }).state
+    while (availableCommand(state).type === 'advance' && availableCommand(state).title === 'Result') state = applyCommand(state, { type: 'advance' }).state
+    expect(availableCommand(state)).not.toMatchObject({ abilityId: `${ROLE.medium}.spirit-check` })
+  })
+
+  it('offers the Medium Spirit check when a Spirit is possible', () => {
+    const deck = [ROLE.medium, ROLE.farmer, ROLE.farmer]
+    let state = createInitialState(officialSetup(deck, [...deck, H.ghost]))
+    state.pipeline = 'cycle'; state.cycle = 2; state.phaseIndex = OFFICIAL_SCENARIO.cyclePipeline.findIndex((phase) => phase.id === 'official.night.actions'); state.phaseId = 'official.night.actions'
+    const check = availableCommand(state)
+    expect(check).toMatchObject({ type: 'choose', abilityId: `${ROLE.medium}.check` })
+    if (check.type !== 'choose') return
+    state = applyCommand(state, { type: 'choose', actorId: check.actorId, abilityId: check.abilityId, targets: [] }).state
+    while (availableCommand(state).type === 'advance' && availableCommand(state).title === 'Result') state = applyCommand(state, { type: 'advance' }).state
+    expect(availableCommand(state)).toMatchObject({ type: 'choose', actorId: 'p0', abilityId: `${ROLE.medium}.spirit-check` })
   })
 })

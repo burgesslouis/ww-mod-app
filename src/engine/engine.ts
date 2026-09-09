@@ -2,10 +2,10 @@ import { BASE_ROLES, BASE_SCENARIO, roleName } from '../data/base'
 import { DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { FACTION, TRAIT } from '../domain/ids'
 import { friendlyFactionLabel, technicalLabel } from '../ui/labels'
-import { absentRoleCandidates, absentRoleRequirements } from './setupInformation'
+import { absentRoleCandidates, absentRoleRequirements, possibleAbilityDefinitions, publicNightOrder, publicRequirementsMet, resolveTurnAnchorIds, spokenTurnBlockers, turnDependencyIssues, publiclyPossibleFactions } from './setupInformation'
 import type {
-  AbilityDefinition, ApplyResult, Condition, Effect, GameCommand, GameEvent, GameSession, GameSetup,
-  EffectiveProperty, FactionDefinition, GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
+  AbilityDefinition, ApplyResult, AttackModifiers, Condition, Effect, GameCommand, GameEvent, GameSession, GameSetup,
+  EffectiveProperty, FactionDefinition, FactionWinScope, GameState, PendingCommand, PlayerState, RoleDefinition, ScenarioDefinition, Selector, SessionSnapshot,
   TraceEntry, ValidationIssue, ValidationResult, VoteState,
 } from '../domain/types'
 
@@ -49,6 +49,18 @@ export function factionName(state: GameState, id: string): string {
   return name === 'Neutral' ? 'Third Party' : name
 }
 function factionOf(state: GameState, player: PlayerState): string { return player.factionOverride ?? roleOf(state, player)?.faction ?? 'unknown' }
+function defaultFactionWinScope(role: RoleDefinition | undefined): FactionWinScope {
+  if (role?.factionWinScope) return role.factionWinScope
+  return role?.faction === FACTION.anyShadow || role?.faction === FACTION.anyHuman || new Set<string>([FACTION.village, FACTION.inquisition, FACTION.criminals, FACTION.city]).has(role?.faction ?? '') ? 'alignment' : 'exact'
+}
+function factionWinScopeOf(state: GameState, player: PlayerState): FactionWinScope { return player.factionWinScope ?? defaultFactionWinScope(roleOf(state, player)) }
+function defaultFactionPolicy(setup: Pick<GameSetup, 'packIds' | 'publicRoles'>, role: RoleDefinition, roles: RoleDefinition[]): { faction: string; winScope: FactionWinScope } {
+  const possible = new Set(publiclyPossibleFactions(setup, roles))
+  const recommendation = [...(role.factionRecommendations ?? [])].filter((entry) => !entry.when || publicRequirementsMet(entry.when, setup, roles)).sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0)).find((entry) => entry.autoDefault && possible.has(entry.faction))
+  const faction = recommendation?.faction ?? role.faction
+  const winScope = faction === role.faction ? (role.factionWinScope ?? defaultFactionWinScope(role)) : (faction === FACTION.anyShadow || faction === FACTION.anyHuman ? 'alignment' : 'exact')
+  return { faction, winScope }
+}
 function statusIsActive(state: GameState, status: PlayerState['statuses'][number]): boolean {
   if (status.data?.sourceMustLive && status.sourcePlayerId && !state.players.find((player) => player.id === status.sourcePlayerId)?.alive) return false
   const requiredStatus = String(status.data?.sourceMustHaveStatus ?? '')
@@ -90,12 +102,25 @@ function currentPhase(state: GameState) {
   return phases[state.phaseIndex]
 }
 
+/** Returns the current table period from phase semantics, never from an
+ * author-defined phase id. Attack resolution is a night operation in the
+ * current rules pipeline; role-action phases already declare their period in
+ * their trigger. */
+export function phasePeriod(state: GameState): 'setup' | 'day' | 'night' | 'morning' {
+  if (state.pipeline === 'setup') return 'setup'
+  const phase = currentPhase(state)
+  if (phase?.type === 'attack-resolution' || (phase?.type === 'role-actions' && phase.trigger === 'night.action')) return 'night'
+  if (phase?.type === 'victory-check' || phase?.type === 'announcements' || phase?.type === 'cycle-end') return 'morning'
+  return 'day'
+}
+
 function issue(issues: ValidationIssue[], path: string, message: string, severity: 'error' | 'warning' = 'error') { issues.push({ path, message, severity }) }
 
 export function validateSetup(setup: GameSetup): ValidationResult {
   const issues: ValidationIssue[] = []
   const { scenario, roles } = rulesFor(setup)
   const known = new Map(roles.map((entry) => [entry.id, entry]))
+  const publiclyPossibleFactionIds = new Set(publiclyPossibleFactions(setup, roles))
   if (setup.scenarioId !== scenario.id) issue(issues, 'scenarioId', 'The selected scenario definition is unavailable.')
   if (setup.players.length < 3) issue(issues, 'players', 'Enter at least three players.')
   const names = setup.players.map((player) => player.name.trim())
@@ -116,6 +141,11 @@ export function validateSetup(setup: GameSetup): ValidationResult {
     const count = exactCounts.get(range.roleId) ?? 0
     if (count < range.min || count > range.max) issue(issues, `publicRoles.${index}`, `${known.get(range.roleId)?.meta.name ?? range.roleId} count ${count} is outside the public ${range.min}–${range.max} range.`)
   })
+  Object.entries(setup.factionPolicies ?? {}).forEach(([roleId, policy]) => {
+    if (!known.has(roleId)) issue(issues, 'factionPolicies.' + roleId, 'Unknown role ' + roleId + '.')
+    if (!publiclyPossibleFactionIds.has(policy.faction)) issue(issues, 'factionPolicies.' + roleId + '.faction', 'Faction choices must be publicly possible in the selected setup.')
+    if (policy.winScope !== 'exact' && policy.winScope !== 'alignment') issue(issues, 'factionPolicies.' + roleId + '.winScope', 'Faction win scope must be exact or alignment.')
+  })
   exactCounts.forEach((_count, id) => { if (!rangeIds.has(id)) issue(issues, 'publicRoles', `${known.get(id)?.meta.name ?? id} is in the deck but not the public possible-role list.`) })
   roles.filter((entry) => exactCounts.has(entry.id)).forEach((entry) => {
     [...entry.requirements, ...entry.abilities.flatMap((ability) => ability.requires ?? [])].forEach((capability) => {
@@ -131,6 +161,14 @@ export function validateSetup(setup: GameSetup): ValidationResult {
     if (!constant?.scenarioOverridable) issue(issues, `roleOverrides.${roleId}.${key}`, `${scenario.meta.name} may not override undeclared or fixed value “${key}”.`)
   }))
   const order = setup.nightOrder ?? scenario.nightOrder
+  const spokenBlockers = spokenTurnBlockers(setup, roles)
+  if (setup.silentNight && spokenBlockers.length) issue(issues, 'silentNight', 'Silent Night is unavailable because ' + spokenBlockers.map((entry) => entry.roleName + ' · ' + entry.abilityName).join(', ') + ' requires a spoken turn.')
+  const knownAbilityIds = new Set(roles.flatMap((role) => role.abilities.map((ability) => ability.id)))
+  possibleAbilityDefinitions(setup, roles, 'night.action').forEach(({ role, ability }) => {
+    const anchorIds = ability.turnDependency?.anchors.kind === 'abilityIds' ? ability.turnDependency.anchors.abilityIds : resolveTurnAnchorIds(ability, setup, roles)
+    for (const anchorId of anchorIds) if (!knownAbilityIds.has(anchorId)) issue(issues, 'roles.' + role.id + '.' + ability.id + '.turnDependency', 'Unknown turn anchor ' + anchorId + '.')
+  })
+  turnDependencyIssues(setup, roles, scenario.nightOrder).forEach((message) => issue(issues, 'nightOrder', message))
   const absentCandidates = new Set(absentRoleCandidates(setup, roles))
   absentRoleRequirements(setup, roles, scenario).forEach(requirement => {
     const selected = setup.absentRoleSelections?.[requirement.roleId]?.[requirement.abilityId] ?? []
@@ -159,6 +197,7 @@ export function validateSetup(setup: GameSetup): ValidationResult {
 
 function assignPlayers(setup: GameSetup, random: GameState['random']): PlayerState[] {
   const manual = setup.manualAssignments ?? {}
+  const rules = rulesFor(setup)
   const remaining = [...setup.exactDeck]
   const assignments = new Map<string, string>()
   setup.players.forEach((player) => {
@@ -173,10 +212,15 @@ function assignPlayers(setup: GameSetup, random: GameState['random']): PlayerSta
   setup.players.filter((player) => !assignments.has(player.id)).forEach((player, index) => assignments.set(player.id, shuffled[index]))
   return setup.players.map((player) => {
     const roleId = assignments.get(player.id)!
-    const definition = rulesFor(setup).roles.find((entry) => entry.id === roleId)
+    const definition = rules.roles.find((entry) => entry.id === roleId)
     const configured = setup.hiddenState?.[player.id] ?? {}
+    const configuredFactionPolicy = setup.factionPolicies?.[roleId]
+    const factionPolicy = configuredFactionPolicy ?? (definition ? defaultFactionPolicy(setup, definition, rules.roles) : undefined)
     return {
       id: player.id, name: player.name.trim(), alive: true, initialRoleId: roleId, roleId,
+      factionOverride: factionPolicy && factionPolicy.faction !== definition?.faction ? factionPolicy.faction : undefined,
+      factionWinScope: factionPolicy?.winScope,
+      abilityOverrides: {},
       statuses: [], roleState: Object.fromEntries((definition?.state ?? []).map((entry) => [entry.key, configured[entry.key] ?? entry.initial])),
     }
   })
@@ -234,8 +278,8 @@ function trace(state: GameState, source: string, message: string, effects?: stri
   state.trace.push(entry); return entry
 }
 
-function queueModeratorStep(state: GameState, title: string, message: string, actionLabel = 'Continue') {
-  state.pendingAnnouncements.push({ title, message, actionLabel, category: 'Moderator step', visibility: 'moderator' })
+function queueModeratorStep(state: GameState, title: string, message: string, actionLabel = 'Continue', extra: { kind?: 'tap' | 'step'; targetIds?: string[] } = {}) {
+  state.pendingAnnouncements.push({ title, message, actionLabel, category: extra.kind === 'tap' ? 'Player notification' : 'Moderator step', visibility: 'moderator', ...extra })
 }
 
 function compare(left: unknown, operator: string, right: unknown): boolean {
@@ -248,6 +292,37 @@ function compare(left: unknown, operator: string, right: unknown): boolean {
 
 function relationshipTarget(state: GameState, from: string | undefined, type: string): string | undefined {
   return state.relationships.find((entry) => entry.from === from && entry.type === type)?.to
+}
+function effectiveNightOrder(state: GameState): string[] {
+  const base = publicNightOrder(state.setup, state.rules.roles, state.rules.scenario.nightOrder)
+  const nodes = new Set(base)
+  const edges = new Map(base.map((id) => [id, new Set<string>()]))
+  const indegree = new Map(base.map((id) => [id, 0]))
+  possibleAbilityDefinitions(state.setup, state.rules.roles, 'night.action').forEach(({ ability }) => {
+    const dependency = ability.turnDependency
+    if (!dependency) return
+    const anchors = resolveTurnAnchorIds(ability, state.setup, state.rules.roles)
+    anchors.forEach((anchorId) => {
+      if (!nodes.has(anchorId) || !nodes.has(ability.id)) return
+      const before = dependency.placement === 'before' ? ability.id : anchorId
+      const after = dependency.placement === 'before' ? anchorId : ability.id
+      const outgoing = edges.get(before)!
+      if (outgoing.has(after)) return
+      outgoing.add(after)
+      indegree.set(after, (indegree.get(after) ?? 0) + 1)
+    })
+  })
+  const ready = base.filter((id) => indegree.get(id) === 0)
+  const result: string[] = []
+  while (ready.length) {
+    const id = ready.shift()!
+    result.push(id)
+    edges.get(id)?.forEach((after) => {
+      indegree.set(after, (indegree.get(after) ?? 1) - 1)
+      if (indegree.get(after) === 0) ready.push(after)
+    })
+  }
+  return result.length === base.length ? result : base
 }
 
 function select(state: GameState, selector: Selector, context: EventContext): string[] {
@@ -271,7 +346,7 @@ function select(state: GameState, selector: Selector, context: EventContext): st
       return target ? [target] : []
     }
     case 'highestRoleOrder': {
-      const order = state.rules.scenario.nightOrder
+      const order = effectiveNightOrder(state)
       return state.players.filter((player) => lifeFilter(player) && hasTrait(state, player.id, selector.trait)).sort((a, b) => {
         const aAbilities = roleOf(state, a)?.abilities.map((ability) => order.indexOf(ability.id)).filter((index) => index >= 0) ?? []
         const bAbilities = roleOf(state, b)?.abilities.map((ability) => order.indexOf(ability.id)).filter((index) => index >= 0) ?? []
@@ -363,6 +438,13 @@ function abilityOwners(state: GameState, trigger: AbilityDefinition['trigger']):
   return result.sort((left, right) => (left.ability.order ?? 100) - (right.ability.order ?? 100) || left.ability.id.localeCompare(right.ability.id) || left.owner.id.localeCompare(right.owner.id))
 }
 
+function abilityIsAvailable(state: GameState, owner: PlayerState, ability: AbilityDefinition): boolean {
+  const override = owner.abilityOverrides?.[ability.id]
+  if (override?.status === 'spent') return false
+  if (override?.status === 'locked' && (override.unlockCycle === undefined || state.cycle < override.unlockCycle)) return false
+  return !(ability.once === 'game' && owner.roleState[`ability-used:${ability.id}`])
+}
+
 function playerLabel(state: GameState, id: string): string { return state.players.find((player) => player.id === id)?.name ?? state.rules.roles.find((role) => role.id === id)?.meta.name ?? roleName(id) }
 
 function formatList(items: string[]): string {
@@ -376,11 +458,12 @@ function possibleSpiritRoles(state: GameState): RoleDefinition[] {
   return state.rules.roles.filter((role) => possible.has(role.id) && role.categories.includes('Status') && role.traits.includes(TRAIT.spirit))
 }
 
-function killPlayer(state: GameState, playerId: string, cause: string, context: EventContext, timing: 'now' | 'next-morning' = 'now') {
+function killPlayer(state: GameState, playerId: string, cause: string, context: EventContext, options: { timing?: 'now' | 'next-morning'; reportAsNightDeath?: boolean; spiritEligible?: boolean } = {}) {
+  const timing = options.timing ?? 'now'
   const player = state.players.find((item) => item.id === playerId)
   if (!player?.alive || state.pendingDeaths.some((entry) => entry.playerId === playerId && entry.timing === timing)) return
   if (timing === 'next-morning') {
-    state.pendingDeaths.push({ playerId, cause, timing, sourceDeathPlayerId: context.event.targetId })
+    state.pendingDeaths.push({ playerId, cause, timing, sourceDeathPlayerId: context.event.targetId, reportAsNightDeath: options.reportAsNightDeath, spiritEligible: options.spiritEligible })
     trace(state, 'Delayed death', `${player.name} will die next morning if the original death remains.`, [cause], context.event.id)
     return
   }
@@ -390,11 +473,73 @@ function killPlayer(state: GameState, playerId: string, cause: string, context: 
   deathMetadata[playerId] = { cause, wasCorrupt, roleId: player.roleId, faction: factionOf(state, player) }
   state.facts.deathMetadata = deathMetadata
   const spiritRolesAvailable = possibleSpiritRoles(state).length > 0
-  if (spiritRolesAvailable && !hasTrait(state, playerId, TRAIT.spirit) && !state.pendingSpiritAssignments.includes(playerId)) state.pendingSpiritAssignments.push(playerId)
+  if (options.spiritEligible !== false && spiritRolesAvailable && !hasTrait(state, playerId, TRAIT.spirit) && !state.pendingSpiritAssignments.includes(playerId)) state.pendingSpiritAssignments.push(playerId)
   const nightDeaths = Array.isArray(state.facts.nightDeaths) ? state.facts.nightDeaths as string[] : []
-  if (state.phaseId.includes('night')) state.facts.nightDeaths = [...new Set([...nightDeaths, playerId])]
+  if (phasePeriod(state) === 'night' || options.reportAsNightDeath) state.facts.nightDeaths = [...new Set([...nightDeaths, playerId])]
   const event = emit(state, 'death.resolved', `${player.name} died: ${cause}.`, 'moderator', { targetId: playerId, data: { cause } })
   dispatch(state, 'death.resolved', { event, chosen: [], prevented: false })
+}
+
+type ResolvedAttackModifiers = Required<Pick<AttackModifiers, 'guardable' | 'healable' | 'protectable' | 'notifyTargetOnHit'>>
+
+function resolvedAttackModifiers(modifiers: AttackModifiers | undefined, defaults: ResolvedAttackModifiers): ResolvedAttackModifiers {
+  return {
+    guardable: modifiers?.guardable ?? defaults.guardable,
+    healable: modifiers?.healable ?? defaults.healable,
+    protectable: modifiers?.protectable ?? modifiers?.witchProtectable ?? defaults.protectable,
+    notifyTargetOnHit: modifiers?.notifyTargetOnHit ?? defaults.notifyTargetOnHit,
+  }
+}
+
+/** Resolve a direct kill as an attack-like event when its definition opts into
+ * modifiers. This keeps immediate effects (such as Assassin) immediate while
+ * allowing declarative redirects and protections to observe them. */
+function resolveImmediateKill(state: GameState, targetId: string, cause: string, context: EventContext, options: { timing?: 'now' | 'next-morning'; reportAsNightDeath?: boolean; spiritEligible?: boolean } = {}, modifiers: AttackModifiers = {}) {
+  const resolved = resolvedAttackModifiers(modifiers, { guardable: false, healable: false, protectable: false, notifyTargetOnHit: false })
+  const visited = new Set<string>()
+  let finalTargetId = targetId
+  let preventionAllowed = true
+  let outcome: EventContext = { event: context.event, chosen: [], prevented: false }
+  while (true) {
+    const target = state.players.find((player) => player.id === finalTargetId)
+    if (!target?.alive) return
+    if (visited.has(finalTargetId)) {
+      const prevented = emit(state, 'kill.prevented', `${cause} kill was prevented because its redirections formed a cycle.`, 'moderator', { targetId: finalTargetId, actorId: context.ownerId, data: { cause, reason: 'Redirection cycle', ...resolved } })
+      dispatch(state, 'kill.prevented', { event: prevented, chosen: [], prevented: false })
+      return
+    }
+    visited.add(finalTargetId)
+    const attempt = emit(state, 'kill.attempted', `${cause} kill attempted on ${target.name}.`, 'moderator', { targetId: finalTargetId, actorId: context.ownerId, data: { cause, attackType: cause, redirectionDepth: visited.size - 1, ...resolved } })
+    const blocked = preventionAllowed && resolved.protectable ? protectionReason(state, finalTargetId, cause) : undefined
+    if (blocked) {
+      const prevented = emit(state, 'kill.prevented', `${cause} kill on ${target.name} prevented: ${blocked}.`, 'moderator', { targetId: finalTargetId, actorId: context.ownerId, data: { cause, reason: blocked, ...resolved } })
+      dispatch(state, 'kill.prevented', { event: prevented, chosen: [], prevented: false })
+      return
+    }
+    outcome = preventionAllowed ? dispatch(state, 'kill.attempted', { event: attempt, chosen: [], prevented: false }) : { event: attempt, chosen: [], prevented: false }
+    if (outcome.prevented) {
+      const prevented = emit(state, 'kill.prevented', `${cause} kill on ${target.name} prevented: ${outcome.preventReason}.`, 'moderator', { targetId: finalTargetId, actorId: context.ownerId, data: { cause, reason: outcome.preventReason, ...resolved } })
+      dispatch(state, 'kill.prevented', { event: prevented, chosen: [], prevented: false })
+      return
+    }
+    if (!outcome.redirect) break
+    const redirectedFrom = finalTargetId
+    finalTargetId = outcome.redirect.targetId
+    const redirected = emit(state, 'kill.redirected', `${cause} kill retargeted from ${target.name} to ${playerLabel(state, finalTargetId)}: ${outcome.redirect.reason}.`, 'moderator', { targetId: finalTargetId, actorId: context.ownerId, data: { cause, redirectedFrom, reason: outcome.redirect.reason, ...resolved } })
+    dispatch(state, 'kill.redirected', { event: redirected, chosen: [], prevented: false })
+    preventionAllowed = outcome.redirect.preventable
+  }
+  const finalTarget = state.players.find((player) => player.id === finalTargetId)
+  if (!finalTarget?.alive) return
+  if (resolved.notifyTargetOnHit && resolved.healable && phasePeriod(state) === 'night') {
+    const hit = emit(state, 'attack.hit', `${finalTarget.name} was hit; tap them before after-attack actions.`, 'moderator', { targetId: finalTargetId, actorId: context.ownerId, data: { attackType: cause, ...resolved } })
+    dispatch(state, 'attack.hit', { event: hit, chosen: [], prevented: false })
+    const pending = Array.isArray(state.facts.pendingTapTargets) ? state.facts.pendingTapTargets as string[] : []
+    state.facts.pendingTapTargets = [...new Set([...pending, finalTargetId])]
+  }
+  // Keep the originating event as the delayed-death dependency. A redirect
+  // changes who is killed, not which death-triggered effect caused the kill.
+  killPlayer(state, finalTargetId, cause, { ...outcome, event: context.event }, options)
 }
 
 function applyEffect(state: GameState, effect: Effect, context: EventContext): string {
@@ -484,8 +629,12 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
       const targetId = targets[0]; if (targetId) context.redirect = { targetId, reason: effect.reason, preventable: effect.preventable !== false }
       return targetId ? `redirected to ${playerLabel(state, targetId)}` : 'no legal redirect target'
     }
-    case 'queueAttack': targets.forEach((targetId) => state.attacks.push({ id: `attack-${state.events.length}-${targetId}`, actorId: context.ownerId, targetId, type: effect.attackType })); return `queued ${effect.attackType} attack`
-    case 'kill': targets.forEach((id) => killPlayer(state, id, effect.cause, context, effect.timing)); return `death effect: ${effect.cause}`
+    case 'queueAttack': {
+      const modifiers = resolvedAttackModifiers({ ...effect.modifiers, notifyTargetOnHit: effect.modifiers?.notifyTargetOnHit ?? effect.notifyTargetOnHit, healable: effect.modifiers?.healable ?? effect.healable }, { guardable: true, healable: false, protectable: true, notifyTargetOnHit: false })
+      targets.forEach((targetId) => state.attacks.push({ id: `attack-${state.events.length}-${targetId}`, actorId: context.ownerId, targetId, type: effect.attackType, modifiers }))
+      return `queued ${effect.attackType} attack`
+    }
+    case 'kill': targets.forEach((id) => resolveImmediateKill(state, id, effect.cause, context, effect, effect.modifiers)); return `death effect: ${effect.cause}`
     case 'revive': targets.forEach((id) => {
       const player = state.players.find((item) => item.id === id); if (!player || player.alive) return
       player.alive = true; state.pendingDeaths = state.pendingDeaths.filter((death) => death.playerId !== id && death.sourceDeathPlayerId !== id)
@@ -496,10 +645,11 @@ function applyEffect(state: GameState, effect: Effect, context: EventContext): s
     case 'transformRole': {
       const nextRoleId = typeof effect.roleId === 'string' ? effect.roleId : context.chosen[0]
       if (!nextRoleId || !state.rules.roles.some((role) => role.id === nextRoleId)) return 'no valid transformation role selected'
-      targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player) { player.roleId = nextRoleId; player.factionOverride = undefined } })
+      const transformedRole = state.rules.roles.find((role) => role.id === nextRoleId)
+      targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player && transformedRole) { const policy = defaultFactionPolicy(state.setup, transformedRole, state.rules.roles); player.roleId = nextRoleId; player.factionOverride = policy.faction === transformedRole.faction ? undefined : policy.faction; player.factionWinScope = policy.winScope; player.abilityOverrides = {} } })
       return `transformed role to ${state.rules.roles.find((role) => role.id === nextRoleId)?.meta.name ?? nextRoleId}`
     }
-    case 'changeFaction': targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player) player.factionOverride = effect.faction }); return `changed faction to ${effect.faction}`
+    case 'changeFaction': targets.forEach((id) => { const player = state.players.find((item) => item.id === id); if (player) { player.factionOverride = effect.faction; player.factionWinScope = effect.winScope ?? 'exact' } }); return `changed faction to ${effect.faction}`
     case 'linkRelationship': targets.forEach((id) => {
       if (!context.ownerId) return
       state.relationships = state.relationships.filter((rel) => !(rel.from === context.ownerId && rel.type === effect.relationship))
@@ -595,7 +745,7 @@ function actionKey(state: GameState, actorId: string, abilityId: string): string
 function eligibleActions(state: GameState): Array<{ actor: PlayerState; ability: AbilityDefinition }> {
   const phase = currentPhase(state)
   if (!phase || phase.type !== 'role-actions') return []
-  const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
+  const order = phase.trigger === 'night.action' ? effectiveNightOrder(state) : []
   return abilityOwners(state, phase.trigger).filter(({ owner, ability }) => {
     if (ability.kind !== 'active' && ability.kind !== 'shared-faction') return false
     const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
@@ -603,7 +753,7 @@ function eligibleActions(state: GameState): Array<{ actor: PlayerState; ability:
     const suppressed = activeStatuses(state, owner).some((status) => status.data?.suppressTrigger === phase.trigger && status.appliedCycle === state.cycle)
     const event = { id: '', sequence: 0, type: ability.trigger, cycle: state.cycle, phaseId: state.phaseId, visibility: 'moderator', message: '' } as GameEvent
     const condition = conditionMatches(state, ability.condition, { event, ownerId: owner.id, chosen: [], prevented: false })
-    return (owner.alive || canActWhileDead) && !suppressed && condition && barrierMatches && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id)) && !(ability.once === 'game' && owner.roleState[`ability-used:${ability.id}`])
+    return (owner.alive || canActWhileDead) && !suppressed && condition && publicRequirementsMet(ability.publicRequirements, state.setup, state.rules.roles) && barrierMatches && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id)) && abilityIsAvailable(state, owner, ability)
   }).sort((left, right) => {
     const a = order.indexOf(left.ability.id), b = order.indexOf(right.ability.id)
     return (a < 0 ? 9999 : a) - (b < 0 ? 9999 : b) || (left.ability.order ?? 100) - (right.ability.order ?? 100)
@@ -647,7 +797,7 @@ function scheduledActions(state: GameState): ScheduledAction[] {
   const phase = currentPhase(state)
   if (!phase || phase.type !== 'role-actions') return []
   const actual = activeActions(state)
-  const order = phase.trigger === 'night.action' ? (state.setup.nightOrder ?? state.rules.scenario.nightOrder) : []
+  const order = phase.trigger === 'night.action' ? effectiveNightOrder(state) : []
   const sort = (items: ScheduledAction[]) => items.sort((left, right) => {
     const a = order.indexOf(left.ability.id), b = order.indexOf(right.ability.id)
     return (a < 0 ? 9999 : a) - (b < 0 ? 9999 : b) || (left.ability.order ?? 100) - (right.ability.order ?? 100) || left.ability.id.localeCompare(right.ability.id)
@@ -664,7 +814,7 @@ function scheduledActions(state: GameState): ScheduledAction[] {
     return role ? role.abilities.filter((ability) => ability.trigger === phase.trigger && (ability.kind === 'active' || ability.kind === 'shared-faction')).map((ability) => ({ role, ability })) : []
   }).filter(({ ability }) => {
     const barrierMatches = !phase.dependencyBarrier || (phase.dependencyBarrier === 'after-attack-resolution' ? ability.dependencyBarrier === 'after-attack-resolution' : ability.dependencyBarrier !== 'after-attack-resolution')
-    return barrierMatches && publiclyEnabled(state, ability.condition) && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id))
+    return barrierMatches && publiclyEnabled(state, ability.condition) && publicRequirementsMet(ability.publicRequirements, state.setup, state.rules.roles) && (ability.activeFromNight ?? 0) <= state.cycle && (!phase.abilityIds || phase.abilityIds.includes(ability.id))
   })
   const possible = new Map<string, { role: RoleDefinition; ability: AbilityDefinition }>()
   possibleAbilities.forEach((entry) => possible.set(entry.ability.simultaneous?.id ?? entry.ability.id, entry))
@@ -713,7 +863,7 @@ export function availableCommand(state: GameState): PendingCommand {
     return { type: 'game-over', title: factionNames.length ? `${factionNames.join(' and ')} victory` : 'Game complete', winners: state.winners, factions: state.winningFactions }
   }
   const result = state.pendingAnnouncements.find((announcement) => announcement.visibility === 'moderator')
-  if (result) return { type: 'advance', title: result.title ?? (result.category === 'Private result' ? 'Result' : result.category), description: result.message, actionLabel: result.actionLabel }
+  if (result) return { type: 'advance', title: result.title ?? (result.category === 'Private result' ? 'Result' : result.category), description: result.message, actionLabel: result.actionLabel, kind: result.kind, targetIds: result.targetIds }
   const spiritRoles = possibleSpiritRoles(state)
   const spiritTarget = spiritRoles.length > 0 && state.pendingSpiritAssignments.find((id) => {
     const player = state.players.find((item) => item.id === id)
@@ -791,6 +941,11 @@ function tallyVote(state: GameState, raw: Record<string, number>, kind: VoteStat
     effective[targetId] = context.voteValue ?? Number(raw[targetId] ?? 0)
   })
   state.votes = { kind, candidates, raw: Object.fromEntries(candidates.map((id) => [id, Number(raw[id] ?? 0)])), effective, expected, acceptedInvalid: entered !== expected }
+  const tallied = emit(state, 'vote.afterTally', `${kind === 'ballot' ? 'Ballot' : 'First vote'} tally complete.`, 'moderator', {
+    targets: candidates,
+    data: { voteKind: kind, raw: state.votes.raw, effective: state.votes.effective, expected, entered, acceptedInvalid: entered !== expected },
+  })
+  dispatch(state, 'vote.afterTally', { event: tallied, chosen: candidates, prevented: false })
   trace(state, `${kind === 'ballot' ? 'Ballot' : 'First vote'} tally`, `${entered}/${expected} raw votes entered${entered !== expected ? ' — accepted invalid' : ''}.`, candidates.map((id) => `${playerLabel(state, id)} ${raw[id] ?? 0} → ${effective[id]}`))
 }
 
@@ -852,33 +1007,49 @@ function protectionReason(state: GameState, targetId: string, attackType: string
 }
 
 function resolveAttack(state: GameState, attack: GameState['attacks'][number]) {
+  const modifiers = resolvedAttackModifiers({ ...attack.modifiers, notifyTargetOnHit: attack.modifiers?.notifyTargetOnHit ?? attack.notifyTargetOnHit, healable: attack.modifiers?.healable ?? attack.healable }, { guardable: true, healable: false, protectable: true, notifyTargetOnHit: false })
   if ((state.facts.cancelNextShadowAttack || Number(state.facts.cancelShadowAttackCycle) === state.cycle) && attack.type === 'shadow') {
     delete state.facts.cancelNextShadowAttack; delete state.facts.cancelShadowAttackCycle
-    emit(state, 'attack.prevented', `${playerLabel(state, attack.targetId)}’s attack was prevented by the Madman’s effect.`, 'moderator', { targetId: attack.targetId, actorId: attack.actorId, data: { attackType: attack.type, reason: 'Madman cancellation' } }); return
+    const prevented = emit(state, 'attack.prevented', `${playerLabel(state, attack.targetId)}’s attack was prevented by the Madman’s effect.`, 'moderator', { targetId: attack.targetId, actorId: attack.actorId, data: { attackType: attack.type, reason: 'Madman cancellation', ...modifiers } })
+    dispatch(state, 'attack.prevented', { event: prevented, chosen: [], prevented: false }); return
   }
   const attemptTarget = (targetId: string, allowProtection: boolean): { targetId: string; prevented: boolean; reason?: string; redirect?: EventContext['redirect'] } => {
     const attempted = emit(state, 'attack.attempted', `${attack.type} attack attempted on ${playerLabel(state, targetId)}.`, 'moderator', { targetId, actorId: attack.actorId, data: { attackType: attack.type } })
-    if (allowProtection) {
+    if (allowProtection && modifiers.protectable) {
       const statusReason = protectionReason(state, targetId, attack.type)
       if (statusReason) return { targetId, prevented: true, reason: statusReason }
     }
     const attemptedContext: EventContext = allowProtection ? dispatch(state, 'attack.attempted', { event: attempted, chosen: [], prevented: false }) : { event: attempted, chosen: [], prevented: false }
     if (attemptedContext.prevented) return { targetId, prevented: true, reason: attemptedContext.preventReason }
-    const successful = emit(state, 'attack.successful', `${attack.type} attack would strike ${playerLabel(state, targetId)}.`, 'moderator', { targetId, actorId: attack.actorId, data: { attackType: attack.type } })
+    const successful = emit(state, 'attack.successful', `${attack.type} attack would strike ${playerLabel(state, targetId)}.`, 'moderator', { targetId, actorId: attack.actorId, data: { attackType: attack.type, ...modifiers } })
     const successContext = dispatch(state, 'attack.successful', { event: successful, chosen: [], prevented: false })
     return { targetId, prevented: successContext.prevented, reason: successContext.preventReason, redirect: successContext.redirect }
   }
   let outcome = attemptTarget(attack.targetId, true)
-  if (outcome.prevented) { emit(state, 'attack.prevented', `Attack on ${playerLabel(state, outcome.targetId)} prevented: ${outcome.reason}.`, 'moderator', { targetId: outcome.targetId, data: { attackType: attack.type, reason: outcome.reason } }); return }
+  if (outcome.prevented) {
+    const prevented = emit(state, 'attack.prevented', `Attack on ${playerLabel(state, outcome.targetId)} prevented: ${outcome.reason}.`, 'moderator', { targetId: outcome.targetId, actorId: attack.actorId, data: { attackType: attack.type, reason: outcome.reason, ...modifiers } })
+    dispatch(state, 'attack.prevented', { event: prevented, chosen: [], prevented: false }); return
+  }
   if (outcome.redirect) {
     const from = outcome.targetId; attack.redirectedFrom = from; attack.targetId = outcome.redirect.targetId
-    emit(state, 'attack.redirected', `Attack retargeted from ${playerLabel(state, from)} to ${playerLabel(state, attack.targetId)}: ${outcome.redirect.reason}.`, 'moderator', { targetId: attack.targetId, data: { attackType: attack.type, redirectedFrom: from } })
+    const redirected = emit(state, 'attack.redirected', `Attack retargeted from ${playerLabel(state, from)} to ${playerLabel(state, attack.targetId)}: ${outcome.redirect.reason}.`, 'moderator', { targetId: attack.targetId, actorId: attack.actorId, data: { attackType: attack.type, redirectedFrom: from, reason: outcome.redirect.reason, ...modifiers } })
+    dispatch(state, 'attack.redirected', { event: redirected, chosen: [], prevented: false })
     outcome = attemptTarget(attack.targetId, outcome.redirect.preventable)
-    if (outcome.prevented) { emit(state, 'attack.prevented', `Redirected attack on ${playerLabel(state, outcome.targetId)} prevented: ${outcome.reason}.`, 'moderator', { targetId: outcome.targetId, data: { attackType: attack.type, reason: outcome.reason } }); return }
+    if (outcome.prevented) {
+      const prevented = emit(state, 'attack.prevented', `Redirected attack on ${playerLabel(state, outcome.targetId)} prevented: ${outcome.reason}.`, 'moderator', { targetId: outcome.targetId, actorId: attack.actorId, data: { attackType: attack.type, reason: outcome.reason, ...modifiers } })
+      dispatch(state, 'attack.prevented', { event: prevented, chosen: [], prevented: false }); return
+    }
   }
   const resolving = emit(state, 'attack.resolving', `${attack.type} attack resolving on ${playerLabel(state, outcome.targetId)}.`, 'moderator', { targetId: outcome.targetId, actorId: attack.actorId, data: { attackType: attack.type } })
   const context = dispatch(state, 'attack.resolving', { event: resolving, chosen: [], prevented: false })
-  if (context.prevented) { emit(state, 'attack.prevented', `Attack on ${playerLabel(state, outcome.targetId)} resolved without death: ${context.preventReason}.`, 'moderator', { targetId: outcome.targetId, data: { attackType: attack.type } }); return }
+  if (context.prevented) {
+    const prevented = emit(state, 'attack.prevented', `Attack on ${playerLabel(state, outcome.targetId)} resolved without death: ${context.preventReason}.`, 'moderator', { targetId: outcome.targetId, actorId: attack.actorId, data: { attackType: attack.type, reason: context.preventReason, ...modifiers } })
+    dispatch(state, 'attack.prevented', { event: prevented, chosen: [], prevented: false }); return
+  }
+  if (modifiers.notifyTargetOnHit && modifiers.healable) {
+    const hit = emit(state, 'attack.hit', `${playerLabel(state, outcome.targetId)} was bitten; tap them before after-attack actions.`, 'moderator', { targetId: outcome.targetId, actorId: attack.actorId, data: { attackType: attack.type, ...modifiers } })
+    dispatch(state, 'attack.hit', { event: hit, chosen: [], prevented: false })
+  }
   killPlayer(state, outcome.targetId, attack.type, context)
 }
 
@@ -890,6 +1061,10 @@ function resolveAttacks(state: GameState, showModeratorStep = false) {
   const outcomes = state.events.slice(eventStart)
   const deaths = [...new Set(outcomes.filter((event) => event.type === 'death.resolved').map((event) => event.targetId).filter((id): id is string => Boolean(id)))]
   const details = outcomes.filter((event) => event.type === 'attack.redirected' || event.type === 'attack.prevented').map((event) => event.message)
+  const pendingTapTargets = Array.isArray(state.facts.pendingTapTargets) ? state.facts.pendingTapTargets as string[] : []
+  delete state.facts.pendingTapTargets
+  const tapTargets = [...new Set([...pendingTapTargets, ...outcomes.filter((event) => event.type === 'attack.hit' && event.data?.notifyTargetOnHit).map((event) => event.targetId).filter((id): id is string => Boolean(id))])]
+  if (tapTargets.length) queueModeratorStep(state, 'Tap the bitten players.', `Tap ${formatList(tapTargets.map((id) => playerLabel(state, id)))} now. The bite got through protection and can be healed.`, 'Continue to attack results', { kind: 'tap', targetIds: tapTargets })
   if (!attacks.length) queueModeratorStep(state, 'No night attack was made.', 'Continue with any roles that act after attacks.', 'Continue')
   else if (deaths.length) queueModeratorStep(state, `${deaths.map((id) => playerLabel(state, id)).join(' and ')} ${deaths.length === 1 ? 'was' : 'were'} killed during the night.`, ['Wake any roles that act after attacks.', ...details].join(' '), 'Continue')
   else queueModeratorStep(state, 'No one died from the night attacks.', [...details, 'Continue with any roles that act after attacks.'].join(' '), 'Continue')
@@ -902,14 +1077,18 @@ function resolveMorningHiddenState(state: GameState) {
     const sourceAlive = death.sourceDeathPlayerId ? state.players.find((player) => player.id === death.sourceDeathPlayerId)?.alive : false
     if (death.sourceDeathPlayerId && sourceAlive) return
     const event = emit(state, 'morning.beforeVictory', `Resolving delayed death for ${playerLabel(state, death.playerId)}.`, 'moderator', { targetId: death.playerId, data: { cause: death.cause } })
-    killPlayer(state, death.playerId, death.cause, { event, chosen: [], prevented: false })
+    killPlayer(state, death.playerId, death.cause, { event, chosen: [], prevented: false }, { reportAsNightDeath: death.reportAsNightDeath, spiritEligible: death.spiritEligible })
   })
 }
 
-function evaluateVictory(state: GameState) {
+function resolveMorningBeforeVictory(state: GameState) {
   resolveMorningHiddenState(state)
   const morningEvent = emit(state, 'morning.beforeVictory', 'Resolving hidden morning role effects.', 'moderator')
   dispatch(state, 'morning.beforeVictory', { event: morningEvent, chosen: [], prevented: false })
+}
+
+function evaluateVictory(state: GameState) {
+  resolveMorningBeforeVictory(state)
   if (state.gameOver) return
   const checkEvent = emit(state, 'victory.check', 'Checking role and scenario victory conditions.', 'moderator', { data: { terminal: false } })
   dispatch(state, 'victory.check', { event: checkEvent, chosen: [], prevented: false })
@@ -946,9 +1125,8 @@ function finalizeVictory(state: GameState, terminal: { faction?: string; trait?:
     if (terminal.trait) return hasTrait(state, player.id, terminal.trait)
     if (!terminal.faction) return false
     const playerAlignment = factionDefinition(state, factionOf(state, player))?.alignment
-    if (factionOf(state, player) === terminal!.faction || (alignment === 'human' && playerAlignment === 'human')) return true
-    if (alignment === 'human' && hasTrait(state, player.id, TRAIT.anyHumanWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
-    if (alignment === 'shadow' && hasTrait(state, player.id, TRAIT.anyShadowWinner)) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
+    if (factionOf(state, player) === terminal!.faction) return true
+    if (factionWinScopeOf(state, player) === 'alignment' && alignment && playerAlignment === alignment) return !hasTrait(state, player.id, TRAIT.littleFolk) || littleFolkAlive >= 2
     if ([FACTION.vampire, FACTION.nosferatu].includes(terminal!.faction as typeof FACTION.vampire | typeof FACTION.nosferatu) && hasTrait(state, player.id, TRAIT.undeadSupport)) return true
     const spiritAlignment = activeStatuses(state, player).find((status) => status.traits?.includes(TRAIT.spirit))?.data?.winningAlignment
     return Boolean(spiritAlignment && alignment && spiritAlignment === alignment)
@@ -1040,13 +1218,39 @@ function executeAdvance(state: GameState) {
 function applyOverride(state: GameState, command: Extract<GameCommand, { type: 'override' }>) {
   if (!command.reason.trim()) throw new Error('Overrides require a reason.')
   const operation = command.operation
-  if (operation.type === 'life') { const player = state.players.find((item) => item.id === operation.playerId); if (player) player.alive = operation.alive }
-  else if (operation.type === 'role') { const player = state.players.find((item) => item.id === operation.playerId); if (player) player.roleId = operation.roleId }
-  else if (operation.type === 'faction') { const player = state.players.find((item) => item.id === operation.playerId); if (player) player.factionOverride = operation.faction }
-  else if (operation.type === 'status') { const player = state.players.find((item) => item.id === operation.playerId); if (player) player.statuses = operation.remove ? player.statuses.filter((status) => status.id !== operation.status.id) : [...player.statuses.filter((status) => status.id !== operation.status.id), operation.status] }
-  else if (operation.type === 'roleState') { const player = state.players.find((item) => item.id === operation.playerId); if (player) player.roleState[operation.key] = operation.value }
+  const playerId = 'playerId' in operation ? operation.playerId : undefined
+  const player = playerId ? state.players.find((item) => item.id === playerId) : undefined
+  if (playerId && !player) throw new Error('The override names an unknown player.')
+  if (operation.type === 'life') player!.alive = operation.alive
+  else if (operation.type === 'role') {
+    const definition = state.rules.roles.find((role) => role.id === operation.roleId)
+    if (!definition) throw new Error('The override names an unavailable role.')
+    const policy = defaultFactionPolicy(state.setup, definition, state.rules.roles)
+    player!.roleId = operation.roleId; player!.factionOverride = policy.faction === definition.faction ? undefined : policy.faction; player!.factionWinScope = policy.winScope; player!.abilityOverrides = {}
+  } else if (operation.type === 'faction') {
+    if (!factionDefinition(state, operation.faction)) throw new Error('The override names an unavailable faction.')
+    player!.factionOverride = operation.faction; player!.factionWinScope = operation.winScope ?? 'exact'
+  } else if (operation.type === 'ability') {
+    const roleAbility = roleOf(state, player!)?.abilities.some((ability) => ability.id === operation.abilityId)
+    const statusAbility = activeStatuses(state, player!).some((status) => status.abilities?.some((ability) => ability.id === operation.abilityId))
+    if (!roleAbility && !statusAbility) throw new Error('The override names an unavailable ability for this player.')
+    const unlockCycle = operation.unlockCycle
+    if (operation.status === 'locked' && (unlockCycle === undefined || !Number.isInteger(unlockCycle) || unlockCycle <= state.cycle)) throw new Error('A locked ability must use a valid future cycle.')
+    player!.abilityOverrides = { ...(player!.abilityOverrides ?? {}), [operation.abilityId]: { status: operation.status, ...(operation.unlockCycle === undefined ? {} : { unlockCycle: operation.unlockCycle }) } }
+    if (operation.status === 'available') delete player!.roleState[`ability-used:${operation.abilityId}`]
+    if (operation.status === 'spent') player!.roleState[`ability-used:${operation.abilityId}`] = true
+    if (operation.status === 'locked') delete player!.roleState[`ability-used:${operation.abilityId}`]
+  } else if (operation.type === 'status') {
+    const status = operation.status
+    if (!status?.id || !status.name || !['permanent', 'night', 'day', 'next-day'].includes(status.duration) || !Number.isInteger(status.appliedCycle) || status.appliedCycle < 0 || (status.traits !== undefined && !Array.isArray(status.traits)) || (status.abilities !== undefined && !Array.isArray(status.abilities)) || (status.data !== undefined && (typeof status.data !== 'object' || status.data === null || Array.isArray(status.data)))) throw new Error('Status overrides require a valid status shape.')
+    player!.statuses = operation.remove ? player!.statuses.filter((status) => status.id !== operation.status.id) : [...player!.statuses.filter((status) => status.id !== operation.status.id), operation.status]
+  } else if (operation.type === 'roleState') {
+    if (!operation.key.trim()) throw new Error('Role-state overrides require a key.')
+    player!.roleState[operation.key] = operation.value
+  }
   else if (operation.type === 'tally' && state.votes) { state.votes.raw = clone(operation.totals); state.votes.effective = clone(operation.totals) }
-  else if (operation.type === 'phase') { state.pipeline = operation.pipeline; state.phaseIndex = operation.phaseIndex; state.phaseId = currentPhase(state)?.id ?? '' }
+  else if (operation.type === 'tally') throw new Error('There is no vote tally to override.')
+  else if (operation.type === 'phase') { const phases = operation.pipeline === 'setup' ? state.rules.scenario.setupPipeline : state.rules.scenario.cyclePipeline; if (!Number.isInteger(operation.phaseIndex) || operation.phaseIndex < 0 || operation.phaseIndex >= phases.length) throw new Error('The override names an unavailable phase.'); state.pipeline = operation.pipeline; state.phaseIndex = operation.phaseIndex; state.phaseId = currentPhase(state)?.id ?? '' }
   else if (operation.type === 'victory') { state.gameOver = true; state.winners = operation.winners; state.winningFactions = operation.factions }
   const event = emit(state, 'override', `Moderator override: ${command.reason}`, 'moderator', { data: { operation } })
   trace(state, 'Moderator override', command.reason, [operation.type], event.id)
@@ -1138,14 +1342,17 @@ export function currentState(session: GameSession): GameState { return session.s
 
 export function runRoleTestBench(role: RoleDefinition, trigger: AbilityDefinition['trigger']): { state: GameState; events: GameEvent[]; trace: TraceEntry[] } {
   const testRoles = [...BASE_ROLES.filter((entry) => entry.id !== role.id), clone(role)]
-  const testDeck = [role.id, 'wherewolf.base.role.farmer', 'wherewolf.base.role.alpha-wolf']
+  const targetRole = testRoles.find((entry) => entry.id !== role.id && !entry.traits.includes(TRAIT.shadow))
+  const eventActorRole = testRoles.find((entry) => entry.id !== role.id && entry.id !== targetRole?.id && entry.traits.includes(TRAIT.shadow))
+  if (!targetRole || !eventActorRole) throw new Error('The role test bench needs generic target and event-actor fixtures.')
+  const testDeck = [role.id, targetRole.id, eventActorRole.id]
   const testCounts = new Map<string, number>(); testDeck.forEach((id) => testCounts.set(id, (testCounts.get(id) ?? 0) + 1))
   const setup: GameSetup = {
     scenarioId: BASE_SCENARIO.id, packIds: [], seed: 7, assignment: 'manual',
     players: [{ id: 'author', name: 'Author role' }, { id: 'target', name: 'Mock target' }, { id: 'wolf', name: 'Mock wolf' }],
     exactDeck: testDeck,
     publicRoles: [...testCounts].map(([roleId, count]) => ({ roleId, min: count, max: count })),
-    manualAssignments: { author: role.id, target: 'wherewolf.base.role.farmer', wolf: 'wherewolf.base.role.alpha-wolf' },
+    manualAssignments: { author: role.id, target: targetRole.id, wolf: eventActorRole.id },
     rules: { scenario: clone(BASE_SCENARIO), roles: testRoles },
   }
   // Supply explicit mock information for roles whose information is prepared before play.
@@ -1159,7 +1366,7 @@ export function runRoleTestBench(role: RoleDefinition, trigger: AbilityDefinitio
   const event = emit(state, trigger, `Fired ${trigger} in the author test bench.`, 'moderator', { actorId: 'wolf', targetId: 'author', data: { attackType: 'shadow', cause: 'shadow', voteKind: 'ballot', raw: 3 } })
   const context: EventContext = { event, ownerId: 'author', chosen: ['target'], prevented: false, voteValue: 3, ballot: ['author', 'target'] }
   role.abilities.filter((ability) => ability.trigger === trigger).forEach((ability) => {
-    if (!conditionMatches(state, ability.condition, context)) { trace(state, `${role.meta.name} · ${ability.name}`, 'Condition did not match the mock event.'); return }
+    if (!conditionMatches(state, ability.condition, context) || !publicRequirementsMet(ability.publicRequirements, state.setup, state.rules.roles)) { trace(state, `${role.meta.name} · ${ability.name}`, 'Condition did not match the mock event.'); return }
     const prepared = setup.absentRoleSelections?.[role.id]?.[ability.id]
     const effects = ability.effects.map((effect) => applyEffect(state, effect, prepared ? { ...context, chosen: prepared } : context))
     trace(state, `${role.meta.name} · ${ability.name}`, 'Condition matched.', effects, event.id)
@@ -1168,10 +1375,16 @@ export function runRoleTestBench(role: RoleDefinition, trigger: AbilityDefinitio
 }
 
 /** Deterministic lifecycle harness used by provider-free conformance tests. */
-export function resolveAttackForTest(input: GameState, targetId: string, attackType = 'shadow'): GameState {
+export function resolveAttackForTest(input: GameState, targetId: string, attackType = 'shadow', metadata: { modifiers?: AttackModifiers; notifyTargetOnHit?: boolean; healable?: boolean } = {}): GameState {
   const state = clone(input)
-  state.attacks.push({ id: `test-attack-${state.events.length}`, targetId, type: attackType })
+  state.attacks.push({ id: `test-attack-${state.events.length}`, targetId, type: attackType, ...metadata })
   resolveAttacks(state)
+  return state
+}
+
+export function resolveAttacksForTest(input: GameState, showModeratorStep = true): GameState {
+  const state = clone(input)
+  resolveAttacks(state, showModeratorStep)
   return state
 }
 
@@ -1193,7 +1406,7 @@ export function killPlayerForTest(input: GameState, targetId: string, cause = 't
 }
 
 export function resolveMorningForTest(input: GameState): GameState {
-  const state = clone(input); resolveMorningHiddenState(state); return state
+  const state = clone(input); resolveMorningBeforeVictory(state); return state
 }
 
 export function evaluateVictoryForTest(input: GameState): GameState {

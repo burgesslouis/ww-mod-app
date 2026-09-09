@@ -28,7 +28,7 @@ export default function Library({ artifacts, roles, packs, scenarios, traitCatal
     await saveArtifact(ready); await onRefresh(); setPreview(null)
   }
   function newArtifact(kind: 'role' | 'pack' | 'scenario') {
-    const source = kind === 'role' ? roles.find((role) => role.meta.name === 'Farmer') ?? roles[0] : kind === 'pack' ? packs[0] : scenarios[0]
+    const source = kind === 'role' ? roles.find((role) => !role.categories.includes('Status')) ?? roles[0] : kind === 'pack' ? packs[0] : scenarios[0]
     const draft = forkArtifact(source as Artifact)
     draft.meta.name = kind === 'role' ? 'Untitled role' : kind === 'pack' ? 'Untitled pack' : 'Untitled scenario'
     onEdit(draft)

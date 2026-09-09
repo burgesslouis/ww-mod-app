@@ -1,6 +1,7 @@
 import { OFFICIAL_SCENARIO } from '../data/expansions'
 import { OFFICIAL_SCENARIO_ID, PACK_ID, SCENARIO_ID } from '../domain/ids'
 import type { GameSession, GameSetup, GameState } from '../domain/types'
+import { spokenTurnBlockers } from '../engine/setupInformation'
 
 const PHASE_ALIASES: Record<string, string> = {
   'base.setup.actions': 'official.setup.actions', 'base.setup.complete': 'official.setup.complete',
@@ -19,11 +20,27 @@ function migrateSetup(setup: GameSetup): GameSetup {
   return migrated
 }
 
+function normalizeSpokenNight(setup: GameSetup, roles: GameState['rules']['roles']): GameSetup {
+  if (!setup.silentNight) return setup
+  const blockers = spokenTurnBlockers(setup, roles)
+  if (!blockers.length) return setup
+  const names = blockers.map((blocker) => `${blocker.roleName} · ${blocker.abilityName}`).join(', ')
+  return {
+    ...setup,
+    silentNight: false,
+    setupWarnings: [...new Set([...(setup.setupWarnings ?? []), `Silent Night was turned off while loading this saved setup because ${names} requires a spoken turn.`])],
+  }
+}
+
 function migrateState(input: GameState): GameState {
-  if (input.scenarioId !== SCENARIO_ID && input.setup.scenarioId !== SCENARIO_ID) return input
+  if (input.scenarioId !== SCENARIO_ID && input.setup.scenarioId !== SCENARIO_ID) {
+    const normalizedSetup = normalizeSpokenNight(input.setup, input.rules.roles)
+    return normalizedSetup === input.setup ? input : { ...structuredClone(input), setup: normalizedSetup }
+  }
   const state = structuredClone(input)
   state.scenarioId = OFFICIAL_SCENARIO_ID
   state.setup = migrateSetup(state.setup)
+  state.setup = normalizeSpokenNight(state.setup, state.rules.roles)
   state.packIds = [...new Set([PACK_ID, ...state.packIds])]
   state.rules.scenario = structuredClone(OFFICIAL_SCENARIO)
   const previousPhase = state.phaseId
@@ -38,10 +55,14 @@ function migrateState(input: GameState): GameState {
 
 /** Compatibility shim for saves created before Base Game was folded into Official Game. */
 export function migrateLegacySession(input: GameSession): GameSession {
-  if (input.setup.scenarioId !== SCENARIO_ID && !input.snapshots.some((snapshot) => snapshot.state.scenarioId === SCENARIO_ID)) return input
+  const legacy = input.setup.scenarioId === SCENARIO_ID || input.snapshots.some((snapshot) => snapshot.state.scenarioId === SCENARIO_ID)
+  const hasSpokenDependency = input.snapshots.some((snapshot) => snapshot.state.setup.silentNight && spokenTurnBlockers(snapshot.state.setup, snapshot.state.rules.roles).length > 0)
+  if (!legacy && !hasSpokenDependency) return input
   const session = structuredClone(input)
   session.setup = migrateSetup(session.setup)
   session.snapshots = session.snapshots.map((snapshot) => ({ ...snapshot, state: migrateState(snapshot.state) }))
+  const current = session.snapshots[session.cursor]?.state ?? session.snapshots.at(-1)?.state
+  if (current) session.setup = normalizeSpokenNight(session.setup, current.rules.roles)
   session.updatedAt = new Date().toISOString()
   return session
 }

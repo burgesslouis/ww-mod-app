@@ -6,5 +6,7 @@ describe('data-driven conformance', () => {
     for (const roleName of ['Witch', 'Guardian Angel', 'Seducer', 'Jester', 'Farmer', 'Wolf Pup', 'Healer', 'Defector', 'Juliet', 'Romeo', 'Alpha Wolf', 'Pack Wolf']) {
       expect(engineSource).not.toContain(roleName)
     }
+    expect(engineSource).not.toMatch(/\b(?:ROLE|DARKEST_ROLE|HIDDEN_ROLE)\./)
+    expect(engineSource).not.toMatch(/wherewolf\.(?:base|darkest-night|hidden-motives)\.role\./)
   })
 })

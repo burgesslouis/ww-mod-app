@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowRight, Check, ChevronDown, ChevronUp, Eye, History,
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { GameCommand, GameSession, PhaseDefinition, RoleDefinition, VoteState } from '../domain/types'
-import { availableCommand, currentState, effectiveProperties, factionName } from '../engine/engine'
+import { availableCommand, currentState, effectiveProperties, factionName, phasePeriod } from '../engine/engine'
 
 interface Props {
   session: GameSession; roles: RoleDefinition[]; onChange: (session: GameSession) => void; onExit: () => void
@@ -62,7 +62,8 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
     submit({ type: 'vote', totals: currentTotals, acceptInvalid: entered !== expected && acceptMismatch })
   }
 
-  const phaseLabel = state.pipeline === 'setup' ? 'N0' : state.phaseId.includes('day') ? `DAY ${state.cycle}` : state.phaseId.includes('morning') ? `MORNING ${state.cycle + 1}` : `N${state.cycle}`
+  const period = phasePeriod(state)
+  const phaseLabel = period === 'setup' ? 'N0' : period === 'day' ? `DAY ${state.cycle}` : period === 'morning' ? `MORNING ${state.cycle + 1}` : `N${state.cycle}`
 
   return <div className="game-page">
     <div className="game-statusbar"><div><span className="pulse" /><strong>{phaseLabel}</strong><small>{state.rules.scenario.meta.name}</small></div><div><Users /> {alive.length} alive</div></div>
@@ -82,6 +83,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
       <section className="command-stage">
         <div className="command-topline"><button className="icon-button mobile-only" onClick={() => setShowRoster(true)}><Users /> Roster</button><div className="history-actions">{onReturnToSetup && canReturnToSetup(session) && <button className="icon-button edit-setup-button" onClick={onReturnToSetup}><Settings2 /> Edit setup</button>}<button className="icon-button" onClick={onUndo} disabled={session.cursor <= 0} title="Undo"><RotateCcw /></button><button className="icon-button" onClick={onRedo} disabled={session.cursor >= session.snapshots.length - 1} title="Redo"><RotateCw /></button><button className="icon-button" onClick={() => setShowTrace(true)}><History /> History</button><button className="icon-button" onClick={() => setShowOverride(true)}><Settings2 /> Override</button></div></div>
 
+        {state.setup.setupWarnings?.map((warning) => <div className="warning-box" role="status" key={warning}><AlertTriangle /> {warning}</div>)}
         <div className={`phase-card ${pending.type === 'game-over' ? 'game-over-card' : ''}`}>
           <span className="eyebrow">{pending.type === 'choose' ? 'ROLE ACTION' : pending.type === 'vote' ? 'VOTE' : pending.type === 'game-over' ? 'GAME OVER' : 'NEXT STEP'}</span>
           <h1>{phaseTitle(pending.title)}</h1>
@@ -99,7 +101,7 @@ export default function GameView({ session, roles, onExit, onUndo, onRedo, onCom
             {entered !== expected && <label className="accept-warning"><input type="checkbox" checked={acceptMismatch} onChange={(event) => setAcceptMismatch(event.target.checked)} /><span className="check-box">{acceptMismatch && <Check />}</span><div><strong>Save this tally anyway</strong><small>The mismatch will be marked in the game history.</small></div></label>}
             <button className="primary command-button" onClick={submitVote}>Record vote <ArrowRight /></button>
           </>}
-          {pending.type === 'advance' && <><p className="phase-instruction">{pending.description}</p>{state.ballot.length > 0 && state.phaseId.includes('ballot') && <div className="ballot-banner"><span>THE BALLOT</span><strong>{formatList(state.ballot.map(label))}</strong></div>}<button className="primary command-button" onClick={() => submit({ type: 'advance' })}>{pending.actionLabel ?? 'Continue'} <ArrowRight /></button></>}
+          {pending.type === 'advance' && <><p className="phase-instruction">{pending.description}</p>{pending.kind === 'tap' && pending.targetIds?.length ? <div className="tap-panel"><span className="eyebrow">TAP NOW</span><strong>{formatList(pending.targetIds.map(label))}</strong><small>These players were bitten successfully. Tap them before continuing.</small></div> : null}{state.ballot.length > 0 && state.phaseId.includes('ballot') && <div className="ballot-banner"><span>THE BALLOT</span><strong>{formatList(state.ballot.map(label))}</strong></div>}<button className="primary command-button" onClick={() => submit({ type: 'advance' })}>{pending.actionLabel ?? 'Continue'} <ArrowRight /></button></>}
           {pending.type === 'game-over' && <>{victoryMessage && <p className="phase-instruction">{victoryMessage}</p>}{pending.factions.length > 0 && <div className="victory-factions"><span>WINNING SIDE</span><strong>{pending.factions.map(factionLabel).join(' · ')}</strong></div>}<h2 className="winner-heading">Winners</h2>{pending.winners.length ? <><p className="phase-instruction">{formatList(pending.winners.map(label))} {pending.winners.length === 1 ? 'wins' : 'win'} the game.</p><div className="winner-list">{pending.winners.map((id) => { const player = state.players.find((entry) => entry.id === id); const personal = state.personalWinners.find((winner) => winner.playerId === id); return <div key={id}><span>{label(id).slice(0, 1)}</span><div><strong>{label(id)}</strong><small>{roleFor(player?.roleId ?? '')?.meta.name}{personal ? ` · ${personal.reason}` : ''}</small></div></div> })}</div></> : <p className="phase-instruction">No individual winners were recorded.</p>}<button className="secondary command-button" onClick={onExit}>Return home</button></>}
           {error && <div className="error-banner"><AlertTriangle /> {error}</div>}
         </div>
@@ -123,7 +125,83 @@ function FarmerSetup({ state, onCommand, roleFor }: { state: ReturnType<typeof c
 
 function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) { return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="drawer" onMouseDown={(event) => event.stopPropagation()}><header><h2>{title}</h2><button className="icon-button" onClick={onClose}><X /></button></header>{children}</aside></div> }
 
+function parseOverrideValue(value: string): unknown {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try { return JSON.parse(trimmed) } catch { return value }
+}
+
 function OverridePanel({ state, roles, onClose, onSubmit }: { state: ReturnType<typeof currentState>; roles: RoleDefinition[]; onClose: () => void; onSubmit: (command: Extract<GameCommand, { type: 'override' }>) => void }) {
-  const [reason, setReason] = useState(''), [playerId, setPlayerId] = useState(state.players[0]?.id ?? ''), [operation, setOperation] = useState<'life' | 'role'>('life'), [alive, setAlive] = useState(true), [roleId, setRoleId] = useState(roles[0]?.id ?? '')
-  return <div className="modal-backdrop"><div className="modal override-modal"><button className="modal-close" onClick={onClose}><X /></button><span className="eyebrow">ADVANCED OVERRIDE</span><h2>Change the game state</h2><div className="warning-box"><AlertTriangle /> Use this for corrections and table rulings. Add a reason so the change is clear in the game history.</div><label className="field"><span>Player</span><select value={playerId} onChange={(event) => setPlayerId(event.target.value)}>{state.players.map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}</select></label><label className="field"><span>Change</span><select value={operation} onChange={(event) => setOperation(event.target.value as 'life' | 'role')}><option value="life">Life state</option><option value="role">Role</option></select></label>{operation === 'life' ? <label className="field"><span>New state</span><select value={alive ? 'alive' : 'dead'} onChange={(event) => setAlive(event.target.value === 'alive')}><option value="alive">Alive</option><option value="dead">Dead</option></select></label> : <label className="field"><span>New role</span><select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.filter((role) => !role.categories.includes('Status')).map((role) => <option key={role.id} value={role.id}>{role.meta.name}</option>)}</select></label>}<label className="field"><span>Reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="What was corrected or decided?" /></label><button className="danger-button full" disabled={!reason.trim()} onClick={() => onSubmit({ type: 'override', reason, operation: operation === 'life' ? { type: 'life', playerId, alive } : { type: 'role', playerId, roleId } })}>Apply override</button></div></div>
+  const allRoles = [...new Map([...state.rules.roles, ...roles].map((role) => [role.id, role])).values()]
+  const factions = [...new Map([...state.rules.scenario.factions, ...state.rules.scenario.packs.filter((pack) => state.packIds.includes(pack.id)).flatMap((pack) => pack.factions ?? [])].map((faction) => [faction.id, faction])).values()]
+  const [reason, setReason] = useState('')
+  const [playerId, setPlayerId] = useState(state.players[0]?.id ?? '')
+  const [operation, setOperation] = useState<'life' | 'role' | 'faction' | 'ability' | 'status' | 'roleState'>('life')
+  const [alive, setAlive] = useState(true)
+  const [roleId, setRoleId] = useState(allRoles[0]?.id ?? '')
+  const [factionId, setFactionId] = useState(factions[0]?.id ?? '')
+  const [winScope, setWinScope] = useState<'exact' | 'alignment'>('exact')
+  const [abilityId, setAbilityId] = useState('')
+  const [abilityStatus, setAbilityStatus] = useState<'available' | 'spent' | 'locked'>('available')
+  const [unlockCycle, setUnlockCycle] = useState(state.cycle + 1)
+  const [statusId, setStatusId] = useState('')
+  const [statusName, setStatusName] = useState('')
+  const [removeStatus, setRemoveStatus] = useState(false)
+  const [stateKey, setStateKey] = useState('')
+  const [stateValue, setStateValue] = useState('')
+  const player = state.players.find((entry) => entry.id === playerId)
+  const abilities = [...(state.rules.roles.find((role) => role.id === player?.roleId)?.abilities ?? []), ...((player?.statuses ?? []).flatMap((status) => status.abilities ?? []))]
+  useEffect(() => { setAbilityId(abilities.length === 1 ? abilities[0].id : '') }, [playerId, player?.roleId])
+  useEffect(() => {
+    setStatusId(removeStatus ? player?.statuses[0]?.id ?? '' : '')
+    setStatusName('')
+  }, [playerId, removeStatus])
+  const submitOverride = () => {
+    let operationValue: Extract<GameCommand, { type: 'override' }>['operation']
+    if (operation === 'life') operationValue = { type: 'life', playerId, alive }
+    else if (operation === 'role') operationValue = { type: 'role', playerId, roleId }
+    else if (operation === 'faction') operationValue = { type: 'faction', playerId, faction: factionId, winScope }
+    else if (operation === 'ability') operationValue = { type: 'ability', playerId, abilityId, status: abilityStatus, ...(abilityStatus === 'locked' ? { unlockCycle } : {}) }
+    else if (operation === 'status') {
+      const existing = player?.statuses.find((status) => status.id === statusId)
+      if (removeStatus && !existing) return
+      operationValue = { type: 'status', playerId, status: existing ?? { id: statusId, name: statusName, duration: 'permanent', appliedCycle: state.cycle }, remove: removeStatus }
+    }
+    else operationValue = { type: 'roleState', playerId, key: stateKey, value: parseOverrideValue(stateValue) }
+    onSubmit({ type: 'override', reason, operation: operationValue })
+  }
+  const statusReady = removeStatus ? Boolean(statusId) : Boolean(statusId.trim() && statusName.trim())
+  return <div className="modal-backdrop">
+    <div className="modal override-modal">
+      <button className="modal-close" onClick={onClose}><X /></button>
+      <span className="eyebrow">ADVANCED OVERRIDE</span>
+      <h2>Change the game state</h2>
+      <div className="warning-box"><AlertTriangle /> Use this for corrections and table rulings. Add a reason so the change is clear in the game history.</div>
+      <label className="field"><span>Player</span><select value={playerId} onChange={(event) => setPlayerId(event.target.value)}>{state.players.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+      <label className="field"><span>Change</span><select value={operation} onChange={(event) => setOperation(event.target.value as typeof operation)}><option value="life">Life state</option><option value="role">Role (including status roles)</option><option value="faction">Faction and win scope</option><option value="ability">Ability availability</option><option value="status">Add or remove status</option><option value="roleState">Role state</option></select></label>
+      {operation === 'life' && <label className="field"><span>New state</span><select value={alive ? 'alive' : 'dead'} onChange={(event) => setAlive(event.target.value === 'alive')}><option value="alive">Alive</option><option value="dead">Dead</option></select></label>}
+      {operation === 'role' && <label className="field"><span>New role</span><select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{allRoles.map((role) => <option key={role.id} value={role.id}>{role.meta.name}</option>)}</select></label>}
+      {operation === 'faction' && <>
+        <label className="field"><span>Faction</span><select value={factionId} onChange={(event) => setFactionId(event.target.value)}>{factions.map((faction) => <option key={faction.id} value={faction.id}>{faction.name}</option>)}</select></label>
+        <label className="field"><span>Win scope</span><select value={winScope} onChange={(event) => setWinScope(event.target.value as typeof winScope)}><option value="exact">Exact faction</option><option value="alignment">Whole alignment</option></select></label>
+      </>}
+      {operation === 'ability' && <>
+        <label className="field"><span>Ability</span><select value={abilityId} disabled={!abilities.length} onChange={(event) => setAbilityId(event.target.value)}><option value="" disabled>{abilities.length ? 'Choose an ability…' : 'No abilities available'}</option>{abilities.map((ability) => <option key={ability.id} value={ability.id}>{ability.name}</option>)}</select></label>
+        <label className="field"><span>Availability</span><select value={abilityStatus} disabled={!abilities.length} onChange={(event) => setAbilityStatus(event.target.value as typeof abilityStatus)}><option value="available">Available</option><option value="spent">Spent</option><option value="locked">Locked until cycle</option></select></label>
+        {abilityStatus === 'locked' && abilities.length > 0 && <label className="field"><span>Unlock cycle</span><input type="number" min={state.cycle + 1} value={unlockCycle} onChange={(event) => setUnlockCycle(Number(event.target.value))} /></label>}
+      </>}
+      {operation === 'status' && <>
+        <label className="check-row"><input type="checkbox" checked={removeStatus} onChange={(event) => setRemoveStatus(event.target.checked)} /><span>Remove an existing status</span></label>
+        {removeStatus
+          ? <label className="field"><span>Existing status</span><select value={statusId} disabled={!player?.statuses.length} onChange={(event) => setStatusId(event.target.value)}><option value="" disabled>{player?.statuses.length ? 'Choose a status…' : 'No statuses to remove'}</option>{player?.statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
+          : <><label className="field"><span>Status id</span><input value={statusId} onChange={(event) => setStatusId(event.target.value)} placeholder="wherewolf.core.status.example" /></label><label className="field"><span>Status name</span><input value={statusName} onChange={(event) => setStatusName(event.target.value)} placeholder="Visible status name" /></label></>}
+      </>}
+      {operation === 'roleState' && <>
+        <label className="field"><span>State key</span><input value={stateKey} onChange={(event) => setStateKey(event.target.value)} placeholder="state key" /></label>
+        <label className="field"><span>Value</span><input value={stateValue} onChange={(event) => setStateValue(event.target.value)} placeholder="Text or JSON value" /><small>Numbers, true, false, null, arrays and objects are stored as typed JSON; other input remains text.</small></label>
+      </>}
+      <label className="field"><span>Reason</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="What was corrected or decided?" /></label>
+      <button className="danger-button full" disabled={!reason.trim() || (operation === 'ability' && !abilityId) || (operation === 'status' && !statusReady) || (operation === 'roleState' && !stateKey.trim())} onClick={submitOverride}>Apply override</button>
+    </div>
+  </div>
 }

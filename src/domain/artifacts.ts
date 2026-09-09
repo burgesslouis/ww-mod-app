@@ -62,8 +62,9 @@ export function previewImport(input: string, installed: Array<RoleDefinition | P
   const supportedPhases = new Set(['role-actions', 'pause', 'aggregate-vote', 'qualification', 'burn-resolution', 'attack-resolution', 'announcements', 'victory-check', 'cycle-end'])
   const embeddedRoles = 'faction' in artifact ? [artifact] : 'roles' in artifact ? artifact.roles : artifact.packs.flatMap((pack) => pack.roles)
   const supportedConditions = new Set(['always', 'all', 'any', 'not', 'actorIsSelf', 'targetIsSelf', 'targetIsRelationship', 'hasTrait', 'hasFaction', 'hasStatus', 'hasRole', 'isAlive', 'ownerInBallot', 'targetRoleHasTrait', 'packSelected', 'publicRolePossible', 'cycle', 'state', 'fact', 'event', 'count'])
+  const supportedPublicRequirements = new Set(['rolePossible', 'traitPossible', 'factionPossible', 'packSelected'])
   const supportedSelectors = new Set(['self', 'chosen', 'eventActor', 'eventTarget', 'allPlayers', 'publicPossibleRoles', 'trait', 'status', 'faction', 'notFaction', 'role', 'relationship', 'highestRoleOrder'])
-  const supportedTriggers = new Set(['setup.action', 'day.action', 'night.action', 'vote.beforeTally', 'vote.afterTally', 'ballot.qualified', 'burn.resolving', 'burn.resolved', 'attack.attempted', 'attack.successful', 'attack.redirected', 'attack.resolving', 'attack.prevented', 'death.resolved', 'morning.beforeVictory', 'morning.announcements', 'victory.check'])
+  const supportedTriggers = new Set(['setup.action', 'day.action', 'night.action', 'vote.beforeTally', 'vote.afterTally', 'ballot.qualified', 'burn.resolving', 'burn.resolved', 'attack.attempted', 'attack.successful', 'attack.hit', 'attack.redirected', 'attack.resolving', 'attack.prevented', 'kill.attempted', 'kill.redirected', 'kill.prevented', 'death.resolved', 'morning.beforeVictory', 'morning.announcements', 'victory.check'])
   const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
   function primitive(value: unknown, field: string, supported: Set<string>, kind: string, path: string) {
     const node = object(value), type = String(node[field])
@@ -78,11 +79,34 @@ export function previewImport(input: string, installed: Array<RoleDefinition | P
     if (node.condition !== undefined) condition(node.condition, `${path}.condition`)
     if (node.selector !== undefined) selector(node.selector, `${path}.selector`)
   }
+  function publicRequirements(value: unknown, path: string) {
+    if (value === undefined) return
+    const node = object(value)
+    if (!['all', 'any'].includes(String(node.match))) issues.push(`Unsupported public requirement match “${String(node.match)}” at ${path}.`)
+    if (!Array.isArray(node.requirements)) { issues.push(`Unsupported public requirement list at ${path}.requirements.`); return }
+    node.requirements.forEach((requirement, index) => primitive(requirement, 'kind', supportedPublicRequirements, 'public requirement', `${path}.requirements[${index}]`))
+  }
+  function attackModifiers(value: unknown, path: string) {
+    if (value === undefined) return
+    const node = object(value)
+    for (const key of ['guardable', 'healable', 'protectable', 'notifyTargetOnHit']) if (node[key] !== undefined && typeof node[key] !== 'boolean') issues.push(`Attack modifier “${key}” must be boolean at ${path}.${key}.`)
+    if (node.witchProtectable !== undefined && typeof node.witchProtectable !== 'boolean') issues.push(`Legacy attack modifier “witchProtectable” must be boolean at ${path}.witchProtectable.`)
+  }
   function abilities(value: unknown, path: string) {
     if (!Array.isArray(value)) { issues.push(`Unsupported ability list at ${path}.`); return }
     value.forEach((item, index) => {
       const at = `${path}[${index}]`, node = primitive(item, 'trigger', supportedTriggers, 'trigger', at)
       condition(node.condition, `${at}.condition`)
+      publicRequirements(node.publicRequirements, `${at}.publicRequirements`)
+      if (node.turnDependency !== undefined) {
+        const dependency = object(node.turnDependency)
+        if (!['before', 'after'].includes(String(dependency.placement))) issues.push(`Unsupported turn dependency placement at ${at}.turnDependency.`)
+        if (typeof dependency.requiresSpokenCall !== 'boolean') issues.push(`Turn dependencies must declare requiresSpokenCall at ${at}.turnDependency.`)
+        const anchors = object(dependency.anchors)
+        if (!['abilityIds', 'roleTrait'].includes(String(anchors.kind))) issues.push(`Unsupported turn dependency anchor at ${at}.turnDependency.anchors.`)
+        if (anchors.kind === 'abilityIds' && !Array.isArray(anchors.abilityIds)) issues.push(`Ability turn dependencies require an abilityIds list at ${at}.turnDependency.anchors.`)
+        if (anchors.kind === 'roleTrait' && typeof anchors.trait !== 'string') issues.push(`Role-trait turn dependencies require a trait at ${at}.turnDependency.anchors.`)
+      }
       if (node.target !== undefined) selector(object(node.target).selector, `${at}.target.selector`)
       effects(node.effects, `${at}.effects`)
     })
@@ -98,6 +122,7 @@ export function previewImport(input: string, installed: Array<RoleDefinition | P
       condition(node.condition, `${at}.condition`)
       for (const key of ['targets', 'guarded', 'replacement']) if (node[key] !== undefined) selector(node[key], `${at}.${key}`)
       for (const key of ['value', 'amount']) if (object(node[key]).count !== undefined) selector(object(node[key]).count, `${at}.${key}.count`)
+      if (node.type === 'queueAttack' || node.type === 'kill') attackModifiers(node.modifiers, `${at}.modifiers`)
       if (node.effects !== undefined) effects(node.effects, `${at}.effects`)
       if (node.otherwise !== undefined) effects(node.otherwise, `${at}.otherwise`)
       if (node.type === 'addStatus') visitStatus(node.status, `${at}.status`)

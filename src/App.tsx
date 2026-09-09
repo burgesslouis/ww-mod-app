@@ -5,7 +5,7 @@ import { DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK, OFFICIAL_SCENARIO } from './da
 import { SCENARIO_ID } from './domain/ids'
 import type { GameSession, PackDefinition, RoleDefinition, ScenarioDefinition, TraitDefinition } from './domain/types'
 import { applyToSession, createSession, currentState, redo, undo } from './engine/engine'
-import { listArtifacts, saveSession, seedBuiltIns } from './storage/db'
+import { deleteSession, listArtifacts, saveSession, seedBuiltIns } from './storage/db'
 import HomeScreen from './components/HomeScreen'
 import SetupWizard from './components/SetupWizard'
 import GameView, { canReturnToSetup } from './components/GameView'
@@ -50,6 +50,11 @@ export default function App({ updater = appUpdater }: { updater?: AppUpdater }) 
 
   async function openSession(next: GameSession) { await saveSession(next); setSession(next); setEditingSetupSessionId(null); setScreen('game') }
   async function updateSession(next: GameSession) { await saveSession(next); setSession(next) }
+  async function removeSession(target: GameSession) {
+    await deleteSession(target.id)
+    if (session?.id === target.id) setSession(null)
+    if (editingSetupSessionId === target.id) setEditingSetupSessionId(null)
+  }
   function openEditor(artifact: Artifact) { setEditArtifact(artifact); setScreen('editor') }
 
   if (!ready) return <div className="boot"><img src={logoUrl} alt="" /><p>Loading…</p></div>
@@ -66,7 +71,7 @@ export default function App({ updater = appUpdater }: { updater?: AppUpdater }) 
       </header>
 
       <main className={`main-content screen-${screen}`}>
-        {screen === 'home' && <HomeScreen onNew={() => setScreen('setup')} onResume={openSession} onLibrary={() => setScreen('library')} update={update} onUpdate={updater.apply} />}
+        {screen === 'home' && <HomeScreen onNew={() => setScreen('setup')} onResume={openSession} onDelete={removeSession} onLibrary={() => setScreen('library')} update={update} onUpdate={updater.apply} />}
         {screen === 'setup' && <SetupWizard roles={roles} packs={packs} scenarios={scenarios} initialSetup={editingSetupSessionId && session?.id === editingSetupSessionId ? session.setup : undefined} onCancel={() => { setEditingSetupSessionId(null); setScreen(editingSetupSessionId ? 'game' : 'home') }} onStart={(setup) => {
           const next = (setup.distributeRolesInApp ? createRoleDeal : createSession)(setup, `${new Date().toLocaleDateString()} game`)
           if (editingSetupSessionId && session?.id === editingSetupSessionId) { next.id = session.id; next.createdAt = session.createdAt }

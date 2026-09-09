@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { BASE_PACK, BASE_ROLES } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
-import { DARKEST_ROLE as D, HIDDEN_ROLE as H, ROLE, FACTION } from '../domain/ids'
+import { DARKEST_ROLE as D, HIDDEN_ROLE as H, ROLE, FACTION, TRAIT } from '../domain/ids'
 import { checksum, forkArtifact, previewImport, withChecksum } from '../domain/artifacts'
 import type { Effect, GameSetup, GameState, RoleDefinition } from '../domain/types'
-import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest } from '../engine/engine'
+import { applyCommand, availableCommand, createInitialState, createSession, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, killPlayerForTest } from '../engine/engine'
 import Editor from '../components/Editor'
+import GameView from '../components/GameView'
 import SetupWizard from '../components/SetupWizard'
 import { reconcileGardenedSeats } from '../ui/setup'
 import { friendlyFactionLabel, moderatorTraits } from '../ui/labels'
@@ -183,12 +184,36 @@ describe('Audit: exports and compatibility', () => {
 })
 
 describe('Audit: editor and setup interactions', () => {
+  it('resets the moderator ability choice when the selected player changes', () => {
+    const setup = makeSetup([ROLE.witch, H.assassin, ROLE.farmer])
+    setup.silentNight = false
+    const session = createSession(setup)
+    render(<GameView session={session} roles={allRoles} onChange={() => {}} onExit={() => {}} onUndo={() => {}} onRedo={() => {}} onCommand={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /Override/i }))
+    fireEvent.change(screen.getByLabelText('Change'), { target: { value: 'ability' } })
+    expect(screen.getByLabelText('Ability')).toHaveValue(`${ROLE.witch}.protect`)
+    fireEvent.change(screen.getByLabelText('Player'), { target: { value: 'p1' } })
+    expect(screen.getByLabelText('Ability')).toHaveValue('')
+  })
+
   it('typing a multiword team label should preserve spaces', () => {
     const role = forkArtifact(BASE_ROLES[0])
     render(<Editor artifact={role} traitCatalogue={[]} onSaved={() => {}} onClose={() => {}} />)
     const input = screen.getByLabelText('Team / win condition label') as HTMLInputElement
     for (const letter of 'Wolf Pack') fireEvent.change(input, { target: { value: input.value + letter } })
     expect(input.value).toBe('Wolf Pack')
+  })
+  it('authors public action requirements in the guided role builder', () => {
+    const role = forkArtifact(BASE_ROLES.find((candidate) => candidate.id === ROLE.witch)!)
+    const traits = [...new Map(allRoles.flatMap((candidate) => candidate.traitDefinitions ?? []).map((trait) => [trait.id, trait])).values()]
+    const { container } = render(<Editor artifact={role} traitCatalogue={traits} onSaved={() => {}} onClose={() => {}} />)
+    fireEvent.click(screen.getByText('Protect from shadow attack'))
+    fireEvent.click(screen.getByRole('button', { name: /Add requirement/i }))
+    fireEvent.change(screen.getByLabelText('Public requirement 1 type'), { target: { value: 'traitPossible' } })
+    fireEvent.change(screen.getByLabelText('Public requirement 1 reference'), { target: { value: TRAIT.spirit } })
+    fireEvent.click(screen.getByRole('button', { name: /Advanced JSON/i }))
+    const draft = JSON.parse((container.querySelector('.advanced-editor textarea') as HTMLTextAreaElement).value) as RoleDefinition
+    expect(draft.abilities.find((ability) => ability.name === 'Protect from shadow attack')?.publicRequirements).toEqual({ match: 'all', requirements: [{ kind: 'traitPossible', trait: TRAIT.spirit }] })
   })
   it('removing a gardened role from the deck must clear the hidden lock', () => {
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
@@ -209,6 +234,21 @@ describe('Audit: editor and setup interactions', () => {
     expect((container.querySelector('.assignment-list select') as HTMLSelectElement).value).toBe('')
     expect(container.querySelector('.validation-box')).toBeNull()
     expect(screen.getByRole('button', { name: /Deal roles & begin/i })).not.toBeDisabled()
+  })
+  it('hides the Medium Spirit check from night order when no Spirit is possible', () => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    render(<SetupWizard roles={allRoles} packs={[BASE_PACK, DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK]} scenarios={[OFFICIAL_SCENARIO]} initialSetup={makeSetup([ROLE.medium, ROLE.farmer, ROLE.farmer])} onCancel={() => {}} onStart={() => {}} />)
+    for (let step = 0; step < 3; step += 1) fireEvent.click(screen.getByRole('button', { name: /^Continue$/i }))
+    expect(screen.queryByText('Check for a Spirit')).toBeNull()
+  })
+  it('restores possible Spirits and shows the Medium Spirit check when editing a setup', () => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    const setup = makeSetup([ROLE.medium, ROLE.farmer, ROLE.farmer])
+    setup.publicRoles.push({ roleId: H.ghost, min: 0, max: 1 })
+    setup.nightOrder = OFFICIAL_SCENARIO.nightOrder.filter((abilityId) => abilityId !== `${ROLE.medium}.spirit-check`)
+    render(<SetupWizard roles={allRoles} packs={[BASE_PACK, DARKEST_NIGHT_PACK, HIDDEN_MOTIVES_PACK]} scenarios={[OFFICIAL_SCENARIO]} initialSetup={setup} onCancel={() => {}} onStart={() => {}} />)
+    for (let step = 0; step < 3; step += 1) fireEvent.click(screen.getByRole('button', { name: /^Continue$/i }))
+    expect(screen.getByText('Check for a Spirit')).toBeInTheDocument()
   })
   it('releases excess copies without disturbing other gardened seats', () => {
     const players = [{ id: 'a', name: 'A', lockedRoleId: ROLE.farmer }, { id: 'b', name: 'B', lockedRoleId: ROLE.farmer }, { id: 'c', name: 'C', lockedRoleId: ROLE.alphaWolf }]

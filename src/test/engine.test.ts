@@ -115,6 +115,19 @@ describe('Voting rules', () => {
     expect(result.votes?.effective.p0).toBe(2)
   })
 
+  it('dispatches one post-tally event after effective totals are stored', () => {
+    const state = atFirstVote([ROLE.farmer, ROLE.farmer, ROLE.alphaWolf])
+    state.players[0].statuses.push({
+      id: 'test.observe-tally', name: 'Observe tally', duration: 'permanent', appliedCycle: 1,
+      abilities: [{ id: 'test.observe-tally.ability', name: 'Remember tally', kind: 'status', trigger: 'vote.afterTally', effects: [{ type: 'setState', key: 'sawFinalTally', value: true }] }],
+    })
+    const result = applyCommand(state, { type: 'vote', totals: { p0: 2, p1: 1, p2: 0 } }).state
+    expect(result.players[0].roleState.sawFinalTally).toBe(true)
+    const events = result.events.filter((event) => event.type === 'vote.afterTally')
+    expect(events).toHaveLength(1)
+    expect(events[0].data).toMatchObject({ raw: { p0: 2, p1: 1, p2: 0 }, effective: { p0: 2, p1: 1, p2: 0 } })
+  })
+
   it('lets a Seducer candidate vote on the final Ballot', () => {
     const state = atFirstVote([ROLE.seducer, ROLE.farmer, ROLE.alphaWolf, ROLE.clairvoyant])
     state.phaseIndex = 3; state.phaseId = 'base.day.ballot-vote'; state.ballot = ['p0', 'p1']
@@ -227,7 +240,7 @@ describe('Voting rules', () => {
 describe('Typed attack lifecycle', () => {
   function guardianState(custom?: RoleDefinition) {
     const state = createInitialState(setupFor([custom?.id ?? ROLE.guardian, ROLE.farmer, ROLE.alphaWolf, ROLE.witch], custom ? [custom] : []))
-    state.pipeline = 'cycle'; state.cycle = 1; state.phaseId = 'base.night.attacks'
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = 6; state.phaseId = 'base.night.attacks'
     state.relationships.push({ type: 'wherewolf.base.relationship.guarded', from: 'p0', to: 'p1' })
     return state
   }
@@ -243,10 +256,71 @@ describe('Typed attack lifecycle', () => {
   it('Base Guardian retargets a successful attack and remains protectable', () => {
     const state = guardianState()
     state.players[0].statuses.push({ id: 'ward', name: 'Protected from shadow attacks', data: { attackType: 'shadow' }, duration: 'night', appliedCycle: 1 })
+    state.players[3].statuses.push({
+      id: 'test.observe-attack-outcomes', name: 'Observe attack outcomes', duration: 'permanent', appliedCycle: 1,
+      abilities: [
+        { id: 'test.observe-attack-redirect', name: 'Remember redirect', kind: 'status', trigger: 'attack.redirected', effects: [{ type: 'setState', key: 'sawAttackRedirect', value: true }] },
+        { id: 'test.observe-attack-prevention', name: 'Remember prevention', kind: 'status', trigger: 'attack.prevented', effects: [{ type: 'setState', key: 'sawAttackPrevention', value: true }] },
+      ],
+    })
     const result = resolveAttackForTest(state, 'p1')
     expect(result.players[0].alive).toBe(true); expect(result.players[1].alive).toBe(true)
     expect(result.events.some((event) => event.type === 'attack.redirected' && event.targetId === 'p0')).toBe(true)
     expect(result.events.some((event) => event.type === 'attack.prevented' && event.targetId === 'p0')).toBe(true)
+    expect(result.players[3].roleState).toMatchObject({ sawAttackRedirect: true, sawAttackPrevention: true })
+  })
+
+  it('re-runs the direct-kill attempt lifecycle on a redirected target', () => {
+    const killer = forkArtifact(BASE_ROLES.find((role) => role.id === ROLE.farmer)!) as RoleDefinition
+    killer.meta.name = 'Direct killer'
+    killer.abilities = [{
+      id: `${killer.id}.kill`, name: 'Kill', kind: 'active', trigger: 'night.action',
+      target: { label: 'Target', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' }, excludeSelf: true },
+      effects: [{ type: 'kill', targets: { kind: 'chosen' }, cause: 'test direct kill', modifiers: { guardable: true } }],
+    }]
+    const state = createInitialState(setupFor([ROLE.guardian, killer.id, ROLE.farmer], [killer]))
+    state.pipeline = 'cycle'; state.cycle = 1; state.phaseIndex = 5; state.phaseId = 'base.night.actions'
+    state.relationships.push({ type: 'wherewolf.base.relationship.guarded', from: 'p0', to: 'p2' })
+    state.players[0].statuses.push({
+      id: 'test.redirected-kill-shield', name: 'Redirected kill shield', duration: 'permanent', appliedCycle: 1,
+      abilities: [
+        { id: 'test.prevent-redirected-kill', name: 'Prevent redirected kill', kind: 'status', trigger: 'kill.attempted', condition: { op: 'targetIsSelf' }, effects: [{ type: 'preventEvent', reason: 'Redirected target reacted.' }] },
+        { id: 'test.observe-kill-redirect', name: 'Remember redirect', kind: 'status', trigger: 'kill.redirected', effects: [{ type: 'setState', key: 'sawKillRedirect', value: true }] },
+        { id: 'test.observe-kill-prevention', name: 'Remember prevention', kind: 'status', trigger: 'kill.prevented', effects: [{ type: 'setState', key: 'sawKillPrevention', value: true }] },
+      ],
+    })
+    const result = executeAbilityForTest(state, 'p1', `${killer.id}.kill`, ['p2'])
+    expect(result.players[0].alive).toBe(true)
+    expect(result.players[2].alive).toBe(true)
+    expect(result.events.filter((event) => event.type === 'kill.attempted').map((event) => event.targetId)).toEqual(['p2', 'p0'])
+    expect(result.events.some((event) => event.type === 'kill.prevented' && event.targetId === 'p0')).toBe(true)
+    expect(result.players[0].roleState).toMatchObject({ sawKillRedirect: true, sawKillPrevention: true })
+  })
+
+  it('bounds a direct-kill redirection cycle and records prevention', () => {
+    const killer = forkArtifact(BASE_ROLES.find((role) => role.id === ROLE.farmer)!) as RoleDefinition
+    killer.abilities = [{
+      id: `${killer.id}.kill`, name: 'Kill', kind: 'active', trigger: 'night.action',
+      target: { label: 'Target', min: 1, max: 1, selector: { kind: 'allPlayers', life: 'alive' }, excludeSelf: true },
+      effects: [{ type: 'kill', targets: { kind: 'chosen' }, cause: 'cyclic kill', modifiers: { guardable: true } }],
+    }]
+    const state = createInitialState(setupFor([ROLE.guardian, killer.id, ROLE.farmer], [killer]))
+    state.relationships.push(
+      { type: 'wherewolf.base.relationship.guarded', from: 'p0', to: 'p2' },
+      { type: 'test.relationship.guarded', from: 'p2', to: 'p0' },
+    )
+    state.players[2].statuses.push({
+      id: 'test.second-guardian', name: 'Second guardian', duration: 'permanent', appliedCycle: 0,
+      abilities: [{
+        id: 'test.second-guardian.redirect', name: 'Redirect', kind: 'status', trigger: 'kill.attempted',
+        condition: { op: 'targetIsRelationship', relationship: 'test.relationship.guarded' },
+        effects: [{ type: 'redirectEvent', targets: { kind: 'self' }, reason: 'Second guard', preventable: true }],
+      }],
+    })
+    const result = executeAbilityForTest(state, 'p1', `${killer.id}.kill`, ['p2'])
+    expect(result.players[0].alive).toBe(true)
+    expect(result.players[2].alive).toBe(true)
+    expect(result.events.some((event) => event.type === 'kill.prevented' && event.data?.reason === 'Redirection cycle')).toBe(true)
   })
 
   it('a cloned role can make mandatory absorption without scenario or engine changes', () => {
@@ -316,6 +390,9 @@ describe('Revival, grief and morning ordering', () => {
     const bite = availableCommand(state)
     expect(bite.type === 'choose' && bite.abilityId).toBe('wherewolf.base.ability.wolf-bite')
     state = applyCommand(state, { type: 'choose', actorId: 'p2', abilityId: 'wherewolf.base.ability.wolf-bite', targets: ['p1'] }).state
+    expect(availableCommand(state)).toMatchObject({ type: 'advance', kind: 'tap', targetIds: ['p1'] })
+    state = applyCommand(state, { type: 'advance' }).state
+    expect(availableCommand(state)).toMatchObject({ type: 'advance' })
     state = applyCommand(state, { type: 'advance' }).state
     const healer = availableCommand(state)
     expect(healer.type === 'choose' && healer.abilityId).toBe(`${ROLE.healer}.revive`)

@@ -55,15 +55,30 @@ export type TriggerType =
   | 'burn.resolved'
   | 'attack.attempted'
   | 'attack.successful'
+  | 'attack.hit'
   | 'attack.redirected'
   | 'attack.resolving'
   | 'attack.prevented'
+  | 'kill.attempted'
+  | 'kill.redirected'
+  | 'kill.prevented'
   | 'death.resolved'
   | 'morning.beforeVictory'
   | 'morning.announcements'
   | 'victory.check'
 
 export type CompareOperator = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'includes'
+
+export type PublicRequirement =
+  | { kind: 'rolePossible'; roleId: string }
+  | { kind: 'traitPossible'; trait: string }
+  | { kind: 'factionPossible'; faction: string }
+  | { kind: 'packSelected'; packId: string }
+
+export interface PublicRequirements {
+  match: 'all' | 'any'
+  requirements: PublicRequirement[]
+}
 
 export type Condition =
   | { op: 'always' }
@@ -116,6 +131,22 @@ export interface TargetSpec {
 
 export type NumericValue = number | { count: Selector; multiplier?: number; add?: number }
 
+/** Declarative properties of an attack-like effect. Undefined properties use the
+ * source effect's legacy-compatible default; the engine never infers them from
+ * a role id or a hidden deal. */
+export interface AttackModifiers {
+  /** May a Guardian-style redirect react to this event? */
+  guardable?: boolean
+  /** Does a successful hit qualify for healing and moderator notification? */
+  healable?: boolean
+  /** May an attack-protection effect stop this effect? */
+  protectable?: boolean
+  /** @deprecated use protectable; retained so older saved artifacts continue to load. */
+  witchProtectable?: boolean
+  /** Should the target be tapped when a healable hit gets through? */
+  notifyTargetOnHit?: boolean
+}
+
 export type Effect =
   | { type: 'inspectTrait'; targets: Selector; trait: string; positive: string; negative: string; rememberAs?: string }
   | { type: 'inspectFaction'; targets: Selector; faction: string; positive: string; negative: string }
@@ -132,11 +163,11 @@ export type Effect =
   | { type: 'removeStatus'; targets: Selector; status: string }
   | { type: 'preventEvent'; reason: string }
   | { type: 'redirectEvent'; targets: Selector; reason: string; preventable?: boolean }
-  | { type: 'queueAttack'; targets: Selector; attackType: string }
-  | { type: 'kill'; targets: Selector; cause: string; timing?: 'now' | 'next-morning' }
+  | { type: 'queueAttack'; targets: Selector; attackType: string; modifiers?: AttackModifiers; /** @deprecated use modifiers.notifyTargetOnHit */ notifyTargetOnHit?: boolean; /** @deprecated use modifiers.healable */ healable?: boolean }
+  | { type: 'kill'; targets: Selector; cause: string; modifiers?: AttackModifiers; timing?: 'now' | 'next-morning'; reportAsNightDeath?: boolean; spiritEligible?: boolean }
   | { type: 'revive'; targets: Selector; limitKey?: string }
   | { type: 'transformRole'; targets: Selector; roleId: string | { chosenRole: true } }
-  | { type: 'changeFaction'; targets: Selector; faction: string }
+  | { type: 'changeFaction'; targets: Selector; faction: string; winScope?: FactionWinScope }
   | { type: 'linkRelationship'; targets: Selector; relationship: string; reciprocal?: string }
   | { type: 'modifyVotesReceived'; targets: Selector; operation: 'multiply' | 'add' | 'replace'; value: NumericValue; rounding?: 'ceil' | 'floor' | 'round' }
   | { type: 'forceBallot'; targets: Selector }
@@ -177,6 +208,23 @@ export interface FactionDefinition {
   alignment?: 'human' | 'shadow' | 'neutral'
 }
 
+export type FactionWinScope = 'exact' | 'alignment'
+export interface FactionRecommendation {
+  faction: string
+  when?: PublicRequirements
+  priority?: number
+  reason?: string
+  autoDefault?: boolean
+}
+
+export interface TurnDependency {
+  anchors:
+    | { kind: 'abilityIds'; abilityIds: string[] }
+    | { kind: 'roleTrait'; trait: string }
+  placement: 'before' | 'after'
+  requiresSpokenCall: boolean
+}
+
 export interface AbilityDefinition {
   id: string
   name: string
@@ -187,6 +235,10 @@ export interface AbilityDefinition {
   activeFromNight?: number
   target?: TargetSpec
   condition?: Condition
+  /** Public setup facts that must match before this action is shown or called. Never checks the dealt roles. */
+  publicRequirements?: PublicRequirements
+  /** Declarative ordering for actions that react to another role's turn. */
+  turnDependency?: TurnDependency
   effects: Effect[]
   instructions?: string
   /** Action phrase read after “wake up and”, for example “check a player for corruption”. */
@@ -201,6 +253,8 @@ export interface RoleDefinition {
   id: string
   meta: ArtifactMeta
   faction: string
+  factionWinScope?: FactionWinScope
+  factionRecommendations?: FactionRecommendation[]
   /** Optional moderator-facing team or win-condition label. */
   displayTeam?: string
   categories: string[]
@@ -272,6 +326,9 @@ export interface GameSetup {
   absentRoleSelections?: Record<string, Record<string, string[]>>
   nightOrder?: string[]
   silentNight?: boolean
+  /** Non-blocking notices produced while loading or migrating a saved setup. */
+  setupWarnings?: string[]
+  factionPolicies?: Record<string, { faction: string; winScope: FactionWinScope }>
   distributeRolesInApp?: boolean
   seed: number
   rules?: { scenario: ScenarioDefinition; roles: RoleDefinition[] }
@@ -287,6 +344,8 @@ export interface PlayerState {
   initialRoleId: string
   roleId: string
   factionOverride?: string
+  factionWinScope?: FactionWinScope
+  abilityOverrides?: Record<string, { status: 'available' | 'spent' | 'locked'; unlockCycle?: number }>
   statuses: StatusInstance[]
   roleState: Record<string, unknown>
 }
@@ -346,9 +405,9 @@ export interface GameState {
   random: RandomState
   votes?: VoteState
   ballot: string[]
-  attacks: Array<{ id: string; actorId?: string; targetId: string; type: string; prevented?: boolean; redirectedFrom?: string }>
-  pendingDeaths: Array<{ playerId: string; cause: string; timing: 'now' | 'next-morning'; sourceDeathPlayerId?: string }>
-  pendingAnnouncements: Array<{ message: string; category: string; visibility: 'moderator' | 'public'; title?: string; actionLabel?: string }>
+  attacks: Array<{ id: string; actorId?: string; targetId: string; type: string; prevented?: boolean; redirectedFrom?: string; modifiers?: AttackModifiers; /** @deprecated legacy saved attack field */ notifyTargetOnHit?: boolean; /** @deprecated legacy saved attack field */ healable?: boolean }>
+  pendingDeaths: Array<{ playerId: string; cause: string; timing: 'now' | 'next-morning'; sourceDeathPlayerId?: string; reportAsNightDeath?: boolean; spiritEligible?: boolean }>
+  pendingAnnouncements: Array<{ message: string; category: string; visibility: 'moderator' | 'public'; title?: string; actionLabel?: string; kind?: 'tap' | 'step'; targetIds?: string[] }>
   pendingSpiritAssignments: string[]
   personalWinners: Array<{ playerId: string; reason: string }>
   personalLosers: Array<{ playerId: string; reason: string }>
@@ -371,7 +430,8 @@ export type GameCommand =
 export type OverrideOperation =
   | { type: 'life'; playerId: string; alive: boolean }
   | { type: 'role'; playerId: string; roleId: string }
-  | { type: 'faction'; playerId: string; faction: string }
+  | { type: 'faction'; playerId: string; faction: string; winScope?: FactionWinScope }
+  | { type: 'ability'; playerId: string; abilityId: string; status: 'available' | 'spent' | 'locked'; unlockCycle?: number }
   | { type: 'status'; playerId: string; status: StatusInstance; remove?: boolean }
   | { type: 'roleState'; playerId: string; key: string; value: unknown }
   | { type: 'tally'; totals: Record<string, number> }
@@ -381,7 +441,7 @@ export type OverrideOperation =
 export type PendingCommand =
   | { type: 'choose'; actorId: string; abilityId: string; title: string; instructions: string; candidates: string[]; min: number; max: number; allowNone: boolean; participantIds?: string[]; information?: Array<{ label: string; value: string; status: 'in-play' | 'not-in-play' }> }
   | { type: 'vote'; title: string; candidates: string[]; expected: number; existing: Record<string, number> }
-  | { type: 'advance'; title: string; description: string; actionLabel?: string }
+  | { type: 'advance'; title: string; description: string; actionLabel?: string; kind?: 'tap' | 'step'; targetIds?: string[] }
   | { type: 'game-over'; title: string; winners: string[]; factions: string[] }
 
 export interface SessionSnapshot { state: GameState; command?: GameCommand }
