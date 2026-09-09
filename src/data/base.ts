@@ -1,5 +1,5 @@
 import { withChecksum } from '../domain/artifacts'
-import { DARKEST_ROLE, FACTION, HIDDEN_PACK_ID, PACK_ID, ROLE, SCENARIO_ID, TRAIT } from '../domain/ids'
+import { DARKEST_PACK_ID, DARKEST_ROLE, FACTION, HIDDEN_PACK_ID, PACK_ID, ROLE, SCENARIO_ID, TRAIT } from '../domain/ids'
 import type { AbilityDefinition, PackDefinition, RoleDefinition, ScenarioDefinition, StateVariable, TraitDefinition } from '../domain/types'
 
 const UUIDS: Record<string, string> = {
@@ -51,7 +51,8 @@ const wolfIntro: AbilityDefinition = {
   effects: [
     { type: 'learnFactionMembers', faction: FACTION.wolves },
     { type: 'learnRoleIdentity', roleId: ROLE.defector },
-  ], callout: 'meet the Pack', instructions: 'Wake all living Werewolves together. Show them the other living Werewolves and the Defector.', requires: ['private-information'], dependencyBarrier: 'setup-information',
+    { type: 'conditional', condition: { op: 'packSelected', packId: DARKEST_PACK_ID }, effects: [{ type: 'learnRoleIdentity', roleId: DARKEST_ROLE.hag }] },
+  ], callout: 'meet the Pack', instructions: 'Wake all living Werewolves together. They recognize one another, identify the Defector, and identify the Hag if Darkest Night is attached. The Hag does not wake for this call.', requires: ['private-information'], dependencyBarrier: 'setup-information',
 }
 
 const wolfBite: AbilityDefinition = {

@@ -3,7 +3,12 @@ import { absentRoleCandidates } from '../engine/setupInformation'
 import { BASE_PACK } from '../data/base'
 import { DARKEST_NIGHT_PACK, DARKEST_NIGHT_ROLES, HIDDEN_MOTIVES_PACK, HIDDEN_MOTIVES_ROLES, OFFICIAL_SCENARIO } from '../data/expansions'
 import { DARKEST_PACK_ID, DARKEST_ROLE as D, FACTION, HIDDEN_PACK_ID, HIDDEN_ROLE as H, ROLE, TRAIT } from '../domain/ids'
-import type { GameSetup } from '../domain/types'
+import type { Effect, GameSetup } from '../domain/types'
+
+function effectIdentifiesHag(effects: Effect[]): boolean {
+  return effects.some((effect) => effect.type === 'learnRoleIdentity' && effect.roleId === D.hag
+    || effect.type === 'conditional' && (effectIdentifiesHag(effect.effects) || effectIdentifiesHag(effect.otherwise ?? [])))
+}
 import { applyCommand, availableCommand, createInitialState, effectiveProperties, evaluateVictoryForTest, executeAbilityForTest, factionName, killPlayerForTest, resolveAttackForTest, resolveAttacksForTest, resolveMorningForTest, validateSetup } from '../engine/engine'
 
 const allRoles = [...BASE_PACK.roles, ...DARKEST_NIGHT_ROLES, ...HIDDEN_MOTIVES_ROLES]
@@ -93,6 +98,16 @@ describe('Official expansion defaults', () => {
     expect(state.players[0].factionWinScope).toBe('exact')
     expect(state.players[2].factionWinScope).toBe('alignment')
   })
+  it('lets every initial Shadow-aligned role identify the Hag without waking the Hag to learn Shadows', () => {
+    const recipients = [ROLE.alphaWolf, ROLE.packWolf, ROLE.wolfPup, D.outcastWolf, D.loneWolf, D.vampire, D.nosferatu, D.igor, D.necromancer, D.undertaker, D.possessed, H.corruptGuard, H.goblin]
+    for (const roleId of recipients) {
+      const role = allRoles.find((entry) => entry.id === roleId)!
+      expect(role.abilities.some((ability) => ability.trigger === 'setup.action' && effectIdentifiesHag(ability.effects)), role.meta.name).toBe(true)
+    }
+    const hag = allRoles.find((entry) => entry.id === D.hag)!
+    expect(hag.abilities.some((ability) => effectIdentifiesHag(ability.effects))).toBe(false)
+  })
+
   it('ships every official role and keeps created roles out of the dealable set', () => {
     expect(DARKEST_NIGHT_ROLES).toHaveLength(20)
     expect(HIDDEN_MOTIVES_ROLES).toHaveLength(19)
